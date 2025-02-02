@@ -1,6 +1,9 @@
-use std::{fs::FileType, ops::DerefMut, sync::{Arc, Mutex}, time::SystemTime};
-
-
+use std::{
+    fs::FileType,
+    ops::DerefMut,
+    sync::{Arc, Mutex},
+    time::SystemTime,
+};
 
 pub struct Directory {
     pub name: Arc<String>,
@@ -8,21 +11,25 @@ pub struct Directory {
     pub no_folders: u64,
     pub no_files: u64,
     pub total_size: u64,
-    pub dirents: Vec<Dirent>
+    pub selected: Option<Arc<Dirent>>,
+    pub dirents: Vec<Arc<Dirent>>,
 }
 
+#[derive(Clone)]
 pub enum Dirent {
     AGGREGATE(Arc<Mutex<AGGREGATOR>>),
-    VALUE(Arc<Mutex<DirEntry>>)
+    VALUE(Arc<Mutex<DirEntry>>),
 }
 
 pub struct AGGREGATOR {
     pub common_name: String,
     pub total_size: u64,
-    pub dirents: Vec<Arc<Mutex<DirEntry>>>
+    pub percent: f32,
+    pub dirents: Vec<Arc<Mutex<DirEntry>>>,
 }
 
 pub struct DirEntry {
+    pub percent: f32,
     pub name: String,
     pub path: String,
     pub size: u64,
@@ -35,5 +42,5 @@ pub struct DirEntry {
     pub modified: SystemTime,
     pub created: SystemTime,
     pub accessed: SystemTime,
-    pub mode: String
+    pub mode: String,
 }
