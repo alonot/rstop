@@ -13,6 +13,8 @@ pub struct Directory {
     pub total_size: u64,
     pub selected: Option<Arc<Dirent>>,
     pub dirents: Vec<Arc<Dirent>>,
+    pub sorted_by_name: bool, // false means sorted in desc order or never sorted
+    pub sorted_by_size: bool, // false means sorted in desc order or never sorted
 }
 
 #[derive(Clone)]
@@ -23,6 +25,8 @@ pub enum Dirent {
 
 pub struct AGGREGATOR {
     pub common_name: String,
+    pub sorted_by_name: bool,
+    pub sorted_by_size: bool,
     pub total_size: u64,
     pub percent: f32,
     pub dirents: Vec<Arc<Mutex<DirEntry>>>,

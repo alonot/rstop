@@ -14,7 +14,7 @@ use std::{ffi::NulError, sync::Arc};
 
 use backend::run_backend;
 use models::models::{DimensionType, DisplayContent, Item, Message, MessageType, Screen, State, WinType, STYLETYPE};
-use models::windows::{FileInfoWin, StorageWin, TextBox, Window};
+use models::windows::{FileInfoWin, HeaderWin, StorageWin, TextBox, Window};
 use ncurses::{
     cbreak, clear, curs_set, endwin, getch, getmouse, initscr, keypad, mmask_t, mousemask, mvprintw, mvwprintw, newwin, nodelay, noecho, printw, raw, refresh, stdscr, timeout, wattron, wborder, wgetch, wrefresh, ALL_MOUSE_EVENTS, BUTTON1_CLICKED, BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
 };
@@ -94,18 +94,19 @@ fn init_screen(
     let clicked: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
         Arc::new(move |t: &mut State| -> Result<bool, String> {
             match t {
-                State::LIST(states) => {}
+                State::LIST(_) => {}
                 State::VALUE(item) => {
                     match item {
                         Item::STRING(val) => {
                             // Convert &mut String to String
 
                             let _ = tx_frontend_clone.send(Message {
-                                content: Some(Arc::new(val.to_string())),
+                                content: Some(Arc::new(format!("{}/",val.to_string()))),
                                 mtype: MessageType::READDIR,
                             });
                         }
                         Item::DIRECTORY(dir_info) => {}
+                        Item::SORT(sort_button) => {},
                     }
                 }
             }
@@ -133,10 +134,12 @@ fn init_screen(
         vec![]
     )));
 
+    let tx_frontend_clone_back = tx_frontend.clone();
+
     let back_clicked: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
         Arc::new( move |t: &mut State| -> Result<bool, String> {
             
-            let _ = tx_frontend.send(Message {
+            let _ = tx_frontend_clone_back.send(Message {
                 content: None,
                 mtype: MessageType::GOBACK,
             });
@@ -146,6 +149,43 @@ fn init_screen(
 
         style.clear();
         style.insert(format!("left_click"), &back_clicked);
+
+    let tx_frontend_clone_name = tx_frontend.clone();
+    
+    let sort_by_name: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
+        Arc::new( move |t: &mut State| -> Result<bool, String> {
+            match t {
+                State::LIST(_) => {},
+                State::VALUE(item) => {
+                    if let Item::SORT(val) = item {
+                        let _ = tx_frontend_clone_name.send(Message {
+                            content: Some(val.context.clone()),
+                            mtype: MessageType::SORTBYNAME,
+                        });
+                    }
+                },
+            }
+
+            
+            Ok(true)
+        });
+    
+    let sort_by_size: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
+        Arc::new( move |t: &mut State| -> Result<bool, String> {
+            match t {
+                State::LIST(_) => {},
+                State::VALUE(item) => {
+                    if let Item::SORT(val) = item {
+                        let _ = tx_frontend.send(Message {
+                            content: Some(val.context.clone()),
+                            mtype: MessageType::SORTBYSIZE,
+                        });
+                    }
+                },
+            }
+            
+            Ok(true)
+        });
     
     current_folder_win.add_child(Box::new(TextBox::new(
         0,
@@ -197,21 +237,47 @@ fn init_screen(
     let storagewindow = screen.get_window(WinType::STORAGEWIN);
     let storage_content = content.get(&WinType::STORAGEWIN).expect("Expected storage");
 
+    storagewindow.add_child(Box::new(HeaderWin::new(
+        0,
+        -1,
+        DimensionType::DIMENS(1),
+        DimensionType::PERCEN(1.),
+        sort_by_name,
+        sort_by_size,
+        vec![],
+    )));
+    
+    let mut storage_inner_window = Box::new(Window::new(
+        format!(""),
+        0,
+        -1,
+        DimensionType::DIMENS(-1),
+        DimensionType::DIMENS(-1),
+        None, 
+        vec![(STYLETYPE::BOTTOMBORDER,1)]
+    ));
+    
     match storage_content {
         State::LIST(states) => {
-            // LOG!(format!("{}",states.len()));
-            states.iter().for_each(|_| {
-                storagewindow.add_child(Box::new(StorageWin::new(
-                    0,
-                    -1,
-                    DimensionType::DIMENS(1),
-                    DimensionType::PERCEN(1.),
-                    vec![]
-                )));
-            });
+            match &states[1] {
+                // LOG!(format!("{}",states.len()));
+                State::LIST(states) => {
+                    states.iter().for_each(|_| {
+                        storage_inner_window.add_child(Box::new(StorageWin::new(
+                            0,
+                            -1,
+                            DimensionType::DIMENS(1),
+                            DimensionType::PERCEN(1.),
+                            vec![]
+                        )));
+                    });
+                },
+                State::VALUE(_) => {},
+            }
         },
         State::VALUE(_) => {},
     }
+    storagewindow.add_child(storage_inner_window);
 
     screen.refresh_screen(true)?;
 
@@ -225,6 +291,9 @@ fn init_screen(
 
 fn total_size_to_string(total_size: u64) -> String {
     let kb = total_size as f64 / 1024.;
+    if kb <= 1. {
+        return format!("{:05.2} B", total_size);
+    }
     let mb = kb / 1024.;
     if mb <= 1. {
         return format!("{:05.2} kb", kb);
@@ -268,6 +337,7 @@ fn main() -> Result<(), NulError> {
     loop {
         match rx_backend.try_recv() {
             Ok(message) => {
+                LOG!("Recieved");
                 screen = init_screen(content.clone(), tx_frontend_arc.clone())?;
                 // println!("{:?} ",message.mtype);
                 Ok(())

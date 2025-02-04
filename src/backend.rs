@@ -6,15 +6,13 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
-use std::task::Context;
 use std::thread::JoinHandle;
 use std::time::SystemTime;
-use std::{io, thread};
+use std::{io, thread, vec};
 
 use models::data_models::{DirEntry, Directory, Dirent, AGGREGATOR};
-use ncurses::ll::clear;
 
-use crate::models::models::{Item, Message, MessageType, State, WinType};
+use crate::models::models::{Item, Message, MessageType, SortButton, State, WinType};
 use crate::{models, LOG};
 
 fn mode_to_octal(mut mode: u32) -> String {
@@ -116,10 +114,13 @@ fn calculate_size(
     Ok(size)
 }
 
-fn dir_entry_data(metadata: &Metadata, path: String) -> Result<DirEntry, Error> {
+fn dir_entry_data(metadata: &Metadata, path: &PathBuf) -> Result<DirEntry, Error> {
     let dir_entry = DirEntry {
-        path: path.clone(),
-        name: path,
+        path: path.to_string_lossy().to_string(),
+        name: match path.file_name() {
+            Some(val) => val.to_string_lossy().to_string(),
+            None => format!(""),
+        },
         size: metadata.size(),
         blksize: metadata.blksize(),
         percent: 0.,
@@ -154,6 +155,8 @@ fn read_directory(
         no_folders: 0,
         selected: None,
         dirents: vec![],
+        sorted_by_name: false,
+        sorted_by_size: false,
     };
     let mut threads = Vec::new();
     let mut aggregators = HashMap::new();
@@ -180,8 +183,7 @@ fn read_directory(
                     } // Skip pseudo-files
 
                     let dir_entry = Arc::new(Mutex::new(
-                        dir_entry_data(&metadata, path.to_string_lossy().to_string())
-                            .map_err(|e| e.to_string())?,
+                        dir_entry_data(&metadata, &path).map_err(|e| e.to_string())?,
                     ));
                     let dir_entry_clone = Arc::clone(&dir_entry);
 
@@ -226,13 +228,15 @@ fn read_directory(
                             .and_then(|val| val.to_str())
                             .unwrap_or("")
                             .to_owned();
-                        LOG!(ext);
+                        LOG!(format!("aggate: {}", ext));
                         aggregators.entry(ext.clone()).or_insert_with(|| {
                             let agg = Arc::new(Mutex::new(AGGREGATOR {
-                                common_name: format!("{}", ext),
+                                common_name: ext.clone(),
                                 percent: 0.,
                                 total_size: 0,
                                 dirents: vec![],
+                                sorted_by_name: false,
+                                sorted_by_size: false,
                             }));
                             directory
                                 .dirents
@@ -273,6 +277,7 @@ fn aggregate_n_send(
     start: usize,
     range: i32,
 ) {
+    LOG!(format!("agg {:?}", directory.name));
     // Calculate total size while updating percentages
     directory.total_size = directory
         .dirents
@@ -340,7 +345,10 @@ fn aggregate_n_send(
         .expect("Storage Window not found");
 
     let storage_names = if let State::LIST(states) = storage_content {
-        states
+        match &mut states[1] {
+            State::LIST(states) => states,
+            State::VALUE(_) => panic!("Expected State::LIST"),
+        }
     } else {
         panic!("Expected State::LIST");
     };
@@ -364,6 +372,84 @@ fn aggregate_n_send(
     });
 }
 
+pub fn sort_dirents_by_size(dirents: &mut Vec<Arc<Dirent>>, desc: bool) {
+    dirents.sort_by(|d1, d2| {
+        let size1 = match &**d1 {
+            Dirent::AGGREGATE(mutex) => mutex.lock().unwrap().total_size,
+            Dirent::VALUE(mutex) => mutex.lock().unwrap().size,
+        };
+        let size2 = match &**d2 {
+            Dirent::AGGREGATE(mutex) => mutex.lock().unwrap().total_size,
+            Dirent::VALUE(mutex) => mutex.lock().unwrap().size,
+        };
+        if desc {
+            size2.cmp(&size1)
+        } else {
+            size1.cmp(&size2)
+        }
+    });
+}
+
+pub fn sort_dirents_by_name(dirents: &mut Vec<Arc<Dirent>>, desc: bool) {
+    dirents.sort_by(|d1, d2| {
+        let name1 = match &**d1 {
+            Dirent::AGGREGATE(mutex) => mutex.lock().unwrap().common_name.clone(),
+            Dirent::VALUE(mutex) => mutex.lock().unwrap().name.clone(),
+        };
+        let name2 = match &**d2 {
+            Dirent::AGGREGATE(mutex) => mutex.lock().unwrap().common_name.clone(),
+            Dirent::VALUE(mutex) => mutex.lock().unwrap().name.clone(),
+        };
+        if desc {
+            name2.cmp(&name1)
+        } else {
+            name1.cmp(&name2)
+        }
+    });
+}
+
+pub fn sort_dir_entry_by_name(dirents: Arc<Dirent>) {
+    match &*dirents {
+        Dirent::AGGREGATE(mutex) => {
+            let agg = &mut mutex.lock().unwrap();
+            let desc = agg.sorted_by_name;
+            let dirent_vec = &mut agg.dirents;
+            dirent_vec.sort_by(|d1, d2| {
+                let name1 = &(&**d1).lock().unwrap().name;
+                let name2 = &(&**d2).lock().unwrap().name;
+                if desc {
+                    name2.cmp(&name1)
+                } else {
+                    name1.cmp(&name2)
+                }
+            });
+            agg.sorted_by_name = !agg.sorted_by_name;
+        }
+        Dirent::VALUE(_) => {}
+    }
+}
+
+pub fn sort_dir_entry_by_size(dirents: Arc<Dirent>)  {
+    match &*dirents {
+        Dirent::AGGREGATE(mutex) => {
+            let agg = &mut mutex.lock().unwrap();
+            let desc = agg.sorted_by_name;
+            let dirent_vec = &mut agg.dirents;
+            dirent_vec.sort_by(|d1, d2| {
+                let size1 = (&**d1).lock().unwrap().size;
+                let size2 = (&**d2).lock().unwrap().size;
+                if desc {
+                    size2.cmp(&size1)
+                } else {
+                    size1.cmp(&size2)
+                }
+            });
+            agg.sorted_by_size = !agg.sorted_by_size;
+        }
+        Dirent::VALUE(_) => {}
+    }
+}
+
 /**
  * Runs backend in another thread
  */
@@ -373,8 +459,23 @@ pub fn run_backend(
     tx_backend: Sender<Message>,
 ) {
     let folder_content = State::LIST(vec![]);
-
-    let storage_content = State::LIST(vec![]);
+    let root = Arc::new("/".to_owned());
+    let storage_content = State::LIST(vec![
+        State::LIST(vec![
+            State::VALUE(Item::STRING(format!("Name"))),
+            State::VALUE(Item::STRING(format!("Size"))),
+            State::VALUE(Item::STRING(format!("Percent"))),
+            State::VALUE(Item::SORT(SortButton {
+                name: format!("Sort by Name"),
+                context: root.clone(),
+            })),
+            State::VALUE(Item::SORT(SortButton {
+                name: format!("Sort by Size"),
+                context: root.clone(),
+            })),
+        ]),
+        State::LIST(vec![]),
+    ]);
 
     let file_content = State::LIST(vec![
         State::VALUE(Item::STRING(format!("File Path"))),
@@ -409,18 +510,27 @@ pub fn run_backend(
                 let content_with_lock_clone = Arc::clone(&content_with_lock);
                 match received.mtype {
                     MessageType::READDIR => {
+                        let curr_dir_name = match directory {
+                            Some(dir) => dir.path,
+                            None => root.clone(),
+                        };
                         let dir = match received.content {
                             Some(val) => val,
-                            None => Arc::new("/".to_owned()),
+                            None => Arc::new(format!("")),
+                        };
+                        let next_dir = if dir.eq(&curr_dir_name) {
+                            dir
+                        } else {
+                            Arc::new(format!("{}{}", curr_dir_name, dir))
                         };
                         directory = match read_directory(
-                            dir,
+                            next_dir,
                             no_threads_lc,
                             content_with_lock_clone,
                             &tx_backend,
                         ) {
                             Ok(val) => {
-                                LOG!(format!("{}", val.name));
+                                LOG!(format!("GOT {}", val.name));
                                 Some(val)
                             }
                             Err(e) => {
@@ -430,35 +540,127 @@ pub fn run_backend(
                         };
                     }
                     MessageType::GOBACK => {
+                        let mut same_dir: bool = false;
+
                         let prev_dir = match directory {
                             Some(ref dir) => {
-                                let name = dir.name.to_string();
+                                let name = dir.path.to_string();
                                 let path = Path::new(&name);
                                 match path.parent() {
-                                    Some(val) => Arc::new(
-                                        val.to_str().expect("can't convert to string").to_string(),
-                                    ),
-                                    None => Arc::new("/".to_owned()),
+                                    Some(val) => {
+                                        let new_path = val
+                                            .to_str()
+                                            .expect("can't convert to string")
+                                            .to_string();
+                                        if new_path.eq(&name) {
+                                            same_dir = true;
+                                        }
+                                        Arc::new(new_path)
+                                    }
+                                    None => {
+                                        same_dir = true;
+                                        root.clone()
+                                    }
                                 }
                             }
-                            None => Arc::new("/".to_owned()),
+                            None => root.clone(),
                         };
-
-                        directory = match read_directory(
-                            prev_dir,
-                            no_threads_lc,
-                            content_with_lock_clone,
-                            &tx_backend,
-                        ) {
-                            Ok(val) => {
-                                LOG!(format!("{}", val.name));
-                                Some(val)
-                            }
-                            Err(e) => {
-                                println!("{e}");
-                                None
-                            }
+                        if !same_dir {
+                            directory = match read_directory(
+                                prev_dir,
+                                no_threads_lc,
+                                content_with_lock_clone,
+                                &tx_backend,
+                            ) {
+                                Ok(val) => {
+                                    LOG!(format!("GOT {}", val.name));
+                                    Some(val)
+                                }
+                                Err(e) => {
+                                    println!("{e}");
+                                    None
+                                }
+                            };
+                        }
+                    }
+                    MessageType::SORTBYNAME => {
+                        let dirent = match received.content {
+                            Some(val) => val.to_string(),
+                            None => root.clone().to_string(),
                         };
+                        match &mut directory {
+                            Some(dir) => {
+                                if dirent.eq(&root.to_string()) {
+                                    // is root
+                                    // LOG!(format!("SORTNAME: {}", dirent));
+                                    sort_dirents_by_name(&mut dir.dirents, dir.sorted_by_name);
+                                    dir.sorted_by_name = !dir.sorted_by_name;
+                                } else {
+                                    // find the dirent
+                                    let mut agg_dirent: Option<Arc<Dirent>> = None;
+                                    for dirent_entry in &mut dir.dirents {
+                                        let is_this_name = match dirent_entry.as_ref() {
+                                            Dirent::AGGREGATE(mutex) => {
+                                                let agg = mutex.lock().unwrap();
+                                                agg.common_name.eq(&dirent)
+                                            },
+                                            Dirent::VALUE(_) => false,
+                                        };
+                                        if is_this_name {
+                                            agg_dirent = Some(dirent_entry.clone());
+                                            break;
+                                        }
+                                    }
+                                    match agg_dirent {
+                                        Some(agg_dirent) => {
+                                            sort_dir_entry_by_name(agg_dirent);
+                                        }
+                                        None => {}
+                                    }
+                                }
+                                aggregate_n_send(content_with_lock.clone(), &tx_backend, dir, 0, -1);
+                            }
+                            None => {}
+                        }
+                    }
+                    MessageType::SORTBYSIZE => {
+                        let dirent = match received.content {
+                            Some(val) => val.to_string(),
+                            None => root.clone().to_string(),
+                        };
+                        match &mut directory {
+                            Some(dir) => {
+                                if dirent.eq(&root.to_string()) {
+                                    // is root
+                                    sort_dirents_by_size(&mut dir.dirents, dir.sorted_by_size);
+                                    dir.sorted_by_size = !dir.sorted_by_size;
+                                } else {
+                                    // find the dirent
+                                    let mut agg_dirent: Option<Arc<Dirent>> = None;
+                                    for dirent_entry in &mut dir.dirents {
+                                        let is_this_name = match dirent_entry.as_ref() {
+                                            Dirent::AGGREGATE(mutex) => {
+                                                let agg = mutex.lock().unwrap();
+                                                agg.common_name.eq(&dirent)
+                                            },
+                                            Dirent::VALUE(_) => false,
+                                        };
+                                        if is_this_name {
+                                            agg_dirent = Some(dirent_entry.clone());
+                                            break;
+                                        }
+                                    }
+                                    match agg_dirent {
+                                        Some(agg_dirent) => {
+                                            sort_dir_entry_by_size(agg_dirent);
+                                        }
+                                        None => {}
+                                    }
+                                }
+                                aggregate_n_send(content_with_lock.clone(), &tx_backend, dir, 0, -1);
+                            }
+                            None => {}
+                        }
                     }
                 }
             }

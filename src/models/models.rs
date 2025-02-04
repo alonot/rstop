@@ -470,6 +470,13 @@ pub enum State {
 pub enum Item {
     STRING(String),
     DIRECTORY(Arc<Dirent>),
+    SORT(SortButton),
+}
+
+#[derive(Clone)]
+pub struct SortButton {
+    pub name: String,
+    pub context: Arc<String>
 }
 
 #[derive(Clone, Debug)]
@@ -487,6 +494,8 @@ pub struct Message {
 pub enum MessageType {
     READDIR,
     GOBACK,
+    SORTBYNAME,
+    SORTBYSIZE,
 }
 
 #[derive(Eq, Hash, PartialEq, Debug)]
