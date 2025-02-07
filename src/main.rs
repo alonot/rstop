@@ -6,17 +6,21 @@ mod util;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs;
-use std::io::StdinLock;
 use std::process::exit;
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
 use std::{ffi::NulError, sync::Arc};
 
 use backend::run_backend;
-use models::models::{DimensionType, DisplayContent, Item, Message, MessageType, Screen, State, WinType, STYLETYPE};
+use models::models::{
+    DimensionType, DisplayContent, Item, Message, MessageType, Screen, State, WinType, STYLETYPE,
+};
 use models::windows::{FileInfoWin, HeaderWin, StorageWin, TextBox, Window};
 use ncurses::{
-    cbreak, clear, curs_set, endwin, getch, getmouse, initscr, keypad, mmask_t, mousemask, mvprintw, mvwprintw, newwin, nodelay, noecho, printw, raw, refresh, stdscr, timeout, wattron, wborder, wgetch, wrefresh, ALL_MOUSE_EVENTS, BUTTON1_CLICKED, BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
+    clear, curs_set, endwin, getch, getmouse, initscr, keypad, mmask_t, mouseinterval,
+    mousemask,nodelay, noecho, refresh, stdscr,
+     BUTTON1_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, KEY_MOUSE,
+    KEY_RESIZE, MEVENT, OK,
 };
 
 #[macro_export]
@@ -28,9 +32,10 @@ macro_rules! LOG {
 }
 
 fn init_screen(
+    screen: &mut Screen,
     content_with_lock: Arc<RwLock<HashMap<WinType, State>>>,
     tx_frontend: Arc<Sender<Message>>,
-) -> Result<Screen, NulError> {
+) -> Result<(), NulError> {
     initscr();
     // cbreak();
     clear();
@@ -38,14 +43,15 @@ fn init_screen(
     // cbreak();
     keypad(stdscr(), true);
     noecho();
-    let mut screen = Screen::new();
     refresh();
+    screen.clear_n_new();
     screen.update_height();
     let width_30p = (0.3 * screen.dim.width as f32).floor() as i32;
     let height_30p = (0.3 * screen.dim.height as f32).floor() as i32;
 
     let mut style: HashMap<String, &dyn Any> = HashMap::new();
     style.insert("with_border".to_owned(), &true);
+
 
     screen.add_window(
         WinType::FOLDERWIN,
@@ -56,7 +62,7 @@ fn init_screen(
             DimensionType::DIMENS(-1),
             DimensionType::PERCEN(0.3),
             Some(&style),
-            vec![(STYLETYPE::FULLBORDER,0)]
+            vec![(STYLETYPE::FULLBORDER, 0)],
         )),
     );
     screen.add_window(
@@ -68,7 +74,7 @@ fn init_screen(
             DimensionType::PERCEN(0.3),
             DimensionType::DIMENS(-1),
             Some(&style),
-            vec![(STYLETYPE::FULLBORDER,0)]
+            vec![(STYLETYPE::FULLBORDER, 0)],
         )),
     );
     let content: std::sync::RwLockReadGuard<'_, HashMap<WinType, State>> =
@@ -84,15 +90,14 @@ fn init_screen(
             DimensionType::DIMENS(-1),
             DimensionType::DIMENS(-1),
             Some(&style),
-            vec![(STYLETYPE::FULLBORDER,0)]
+            vec![(STYLETYPE::FULLBORDER, 0)],
         )),
     );
 
     screen.refresh_screen(true)?;
 
-    let tx_frontend_clone = tx_frontend.clone();
-    let clicked: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
-        Arc::new(move |t: &mut State| -> Result<bool, String> {
+    let clicked: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> = Arc::new(
+         |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
             match t {
                 State::LIST(_) => {}
                 State::VALUE(item) => {
@@ -100,18 +105,19 @@ fn init_screen(
                         Item::STRING(val) => {
                             // Convert &mut String to String
 
-                            let _ = tx_frontend_clone.send(Message {
-                                content: Some(Arc::new(format!("{}/",val.to_string()))),
+                            let _ = tx_frontend.send(Message {
+                                content: Some(Arc::new(format!("{}/", val.to_string()))),
                                 mtype: MessageType::READDIR,
                             });
                         }
-                        Item::DIRECTORY(dir_info) => {}
-                        Item::SORT(sort_button) => {},
+                        Item::DIRECTORY(_) => {}
+                        Item::SORT(_) => {}
                     }
                 }
             }
             Ok(true)
-        });
+        },
+    );
 
     let folderwindow = screen.get_window(WinType::FOLDERWIN);
 
@@ -119,10 +125,10 @@ fn init_screen(
         format!(""),
         0,
         -1,
-        DimensionType::DIMENS(5),
+        DimensionType::DIMENS(4),
         DimensionType::DIMENS(-1),
-        Some(&style),   
-        vec![(STYLETYPE::BOTTOMBORDER,1)]
+        Some(&style),
+        vec![(STYLETYPE::BOTTOMBORDER, 1)],
     ));
 
     current_folder_win.add_child(Box::new(TextBox::new(
@@ -130,71 +136,71 @@ fn init_screen(
         -1,
         DimensionType::DIMENS(2),
         DimensionType::DIMENS(-1),
-        None,   
-        vec![]
+        None,
+        vec![],
     )));
 
-    let tx_frontend_clone_back = tx_frontend.clone();
+    let back_clicked: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
+        Arc::new(
+            |_: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
+                let _ = tx_frontend.send(Message {
+                    content: None,
+                    mtype: MessageType::GOBACK,
+                });
 
-    let back_clicked: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
-        Arc::new( move |t: &mut State| -> Result<bool, String> {
-            
-            let _ = tx_frontend_clone_back.send(Message {
-                content: None,
-                mtype: MessageType::GOBACK,
-            });
-            
-            Ok(true)
-        });
+                Ok(true)
+            },
+        );
 
-        style.clear();
-        style.insert(format!("left_click"), &back_clicked);
+    style.clear();
+    style.insert(format!("left_click"), &back_clicked);
 
-    let tx_frontend_clone_name = tx_frontend.clone();
-    
-    let sort_by_name: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
-        Arc::new( move |t: &mut State| -> Result<bool, String> {
-            match t {
-                State::LIST(_) => {},
-                State::VALUE(item) => {
-                    if let Item::SORT(val) = item {
-                        let _ = tx_frontend_clone_name.send(Message {
-                            content: Some(val.context.clone()),
-                            mtype: MessageType::SORTBYNAME,
-                        });
-                    }
-                },
-            }
-
-            
-            Ok(true)
-        });
-    
-    let sort_by_size: Arc<dyn Fn(&mut State) -> Result<bool, String>> =
-        Arc::new( move |t: &mut State| -> Result<bool, String> {
-            match t {
-                State::LIST(_) => {},
-                State::VALUE(item) => {
-                    if let Item::SORT(val) = item {
-                        let _ = tx_frontend.send(Message {
-                            content: Some(val.context.clone()),
-                            mtype: MessageType::SORTBYSIZE,
-                        });
-                    }
-                },
-            }
-            
-            Ok(true)
-        });
-    
     current_folder_win.add_child(Box::new(TextBox::new(
         0,
-        3,
+        2,
         DimensionType::DIMENS(1),
         DimensionType::DIMENS(10),
-        Some(&style),   
-        vec![]
+        Some(&style),
+        vec![],
     )));
+
+    let sort_by_name: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
+        Arc::new(
+            |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
+                match t {
+                    State::LIST(_) => {}
+                    State::VALUE(item) => {
+                        if let Item::SORT(val) = item {
+                            let _ = tx_frontend.send(Message {
+                                content: Some(val.context.clone()),
+                                mtype: MessageType::SORTBYNAME,
+                            });
+                        }
+                    }
+                }
+
+                Ok(true)
+            },
+        );
+
+    let sort_by_size: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
+        Arc::new(
+         |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
+                match t {
+                    State::LIST(_) => {}
+                    State::VALUE(item) => {
+                        if let Item::SORT(val) = item {
+                            let _ = tx_frontend.send(Message {
+                                content: Some(val.context.clone()),
+                                mtype: MessageType::SORTBYSIZE,
+                            });
+                        }
+                    }
+                }
+
+                Ok(true)
+            },
+        );
 
     folderwindow.add_child(current_folder_win);
 
@@ -210,7 +216,7 @@ fn init_screen(
                     DimensionType::DIMENS(1),
                     DimensionType::PERCEN(1.),
                     Some(&style),
-                    vec![]
+                    vec![],
                 )));
             });
         }
@@ -224,14 +230,14 @@ fn init_screen(
         DimensionType::DIMENS(1),
         DimensionType::PERCEN(1.),
         None,
-        vec![]
+        vec![],
     )));
     filewindow.add_child(Box::new(FileInfoWin::new(
         0,
         -1,
         DimensionType::DIMENS(-1),
         DimensionType::PERCEN(1.),
-        vec![]
+        vec![],
     )));
 
     let storagewindow = screen.get_window(WinType::STORAGEWIN);
@@ -246,17 +252,17 @@ fn init_screen(
         sort_by_size,
         vec![],
     )));
-    
+
     let mut storage_inner_window = Box::new(Window::new(
         format!(""),
         0,
         -1,
         DimensionType::DIMENS(-1),
         DimensionType::DIMENS(-1),
-        None, 
-        vec![(STYLETYPE::BOTTOMBORDER,1)]
+        None,
+        vec![(STYLETYPE::BOTTOMBORDER, 1)],
     ));
-    
+
     match storage_content {
         State::LIST(states) => {
             match &states[1] {
@@ -268,14 +274,14 @@ fn init_screen(
                             -1,
                             DimensionType::DIMENS(1),
                             DimensionType::PERCEN(1.),
-                            vec![]
+                            vec![],
                         )));
                     });
-                },
-                State::VALUE(_) => {},
+                }
+                State::VALUE(_) => {}
             }
-        },
-        State::VALUE(_) => {},
+        }
+        State::VALUE(_) => {}
     }
     storagewindow.add_child(storage_inner_window);
 
@@ -286,7 +292,7 @@ fn init_screen(
     // // turn this "true" atlast will result in flushing of the value populated before
     screen.refresh_screen(false)?;
 
-    Ok(screen)
+    Ok(())
 }
 
 fn total_size_to_string(total_size: u64) -> String {
@@ -322,7 +328,9 @@ fn main() -> Result<(), NulError> {
     run_backend(content.clone(), rx_frontend, tx_backend);
     let tx_frontend_arc = Arc::new(tx_frontend);
 
-    let mut screen = init_screen(content.clone(), tx_frontend_arc.clone())?;
+    let mut screen = Screen::new();
+
+    init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
 
     let _ = tx_frontend_arc
         .send(Message {
@@ -332,13 +340,28 @@ fn main() -> Result<(), NulError> {
         .map_err(|e| format!("{e:?}"));
 
     nodelay(stdscr(), true); // make getch non-blocking
-    mousemask(ALL_MOUSE_EVENTS as mmask_t, None);
+    mousemask(
+        ( BUTTON1_PRESSED | BUTTON3_PRESSED | BUTTON4_PRESSED | BUTTON5_PRESSED) as mmask_t,
+        None,
+    );
+    mouseinterval(0);
 
     loop {
         match rx_backend.try_recv() {
             Ok(message) => {
-                LOG!("Recieved");
-                screen = init_screen(content.clone(), tx_frontend_arc.clone())?;
+                // LOG!("Recieved");
+                match message.mtype {
+                    MessageType::RELOADSTORAGE => {
+                        screen.refresh_screen(true)?;
+                        let content_without_lock = (*content).read().unwrap();
+                        screen.populate(content_without_lock)?;
+                        // // turn this "true" atlast will result in flushing of the value populated before
+                        screen.refresh_screen(false)?;
+                    }
+                    _ => {
+                        init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
+                    }
+                }
                 // println!("{:?} ",message.mtype);
                 Ok(())
             }
@@ -361,7 +384,7 @@ fn main() -> Result<(), NulError> {
         let ch = getch();
         if ch == KEY_RESIZE {
             screen.update_height();
-            screen = init_screen(content.clone(), tx_frontend_arc.clone())?;
+            init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
         } else if ch == 'q' as i32 || ch == 'Q' as i32 {
             break;
         } else if ch == KEY_MOUSE {
@@ -375,9 +398,19 @@ fn main() -> Result<(), NulError> {
             };
 
             if getmouse(&mut event) == OK {
-                // LOG!(format!("CALLED: {}", event.bstate & BUTTON1_PRESSED as u32 == 0));
-                // fs::write("log.txt", format!("{val}\nREmoved {event:?}"));
-                screen.checkMouseClick(content.write().unwrap(), &mut event);
+                LOG!(format!(
+                    "5:{} 4:{} 1:{} 2:{} {}",
+                    event.bstate & BUTTON5_PRESSED as u32,
+                    event.bstate & BUTTON4_PRESSED as u32,
+                    event.bstate & BUTTON1_PRESSED as u32,
+                    event.bstate & BUTTON3_PRESSED as u32,
+                    event.id
+                ));
+                screen.checkMouseClick(
+                    content.write().unwrap(),
+                    &mut event,
+                    tx_frontend_arc.clone(),
+                );
             }
         }
         // checking for mouseclicks in respective windows

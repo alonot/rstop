@@ -1,6 +1,5 @@
 use std::{
     fs::FileType,
-    ops::DerefMut,
     sync::{Arc, Mutex},
     time::SystemTime,
 };
@@ -11,7 +10,7 @@ pub struct Directory {
     pub no_folders: u64,
     pub no_files: u64,
     pub total_size: u64,
-    pub selected: Option<Arc<Dirent>>,
+    pub selected: Option<Arc<Mutex<DirEntry>>>,
     pub dirents: Vec<Arc<Dirent>>,
     pub sorted_by_name: bool, // false means sorted in desc order or never sorted
     pub sorted_by_size: bool, // false means sorted in desc order or never sorted
@@ -29,6 +28,7 @@ pub struct AGGREGATOR {
     pub sorted_by_size: bool,
     pub total_size: u64,
     pub percent: f32,
+    pub expanded: bool,
     pub dirents: Vec<Arc<Mutex<DirEntry>>>,
 }
 
