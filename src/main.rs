@@ -18,7 +18,7 @@ use models::models::{
 };
 use models::windows::{FileInfoWin, HeaderWin, ScrollView, StorageWin, TextBox, Window};
 use ncurses::{
-    cbreak, clear, curs_set, doupdate, endwin, flushinp, getch, getmouse, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, stdscr, timeout, BUTTON1_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, ERR, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
+    cbreak, clear, curs_set, doupdate, endwin, flushinp, getch, getmouse, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, stdscr, timeout, ALL_MOUSE_EVENTS, BUTTON1_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, ERR, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
 };
 
 #[macro_export]
@@ -340,7 +340,7 @@ fn main() -> Result<(), NulError> {
         .map_err(|e| format!("{e:?}"));
 
     mousemask(
-        (BUTTON1_PRESSED | BUTTON3_PRESSED | BUTTON4_PRESSED | BUTTON5_PRESSED) as mmask_t,
+        ALL_MOUSE_EVENTS as mmask_t,
         None,
     );
     mouseinterval(0);
