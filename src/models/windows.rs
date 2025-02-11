@@ -32,6 +32,14 @@ macro_rules! implement_getters_setters {
             self.win = Some(window);
         }
 
+        fn set_visited(&mut self, val: bool) {
+            self.visited = val;
+        }
+
+        fn get_visited(&mut self) -> bool {
+            self.visited
+        }
+
         fn set_pad(&mut self, window: WINDOW) {
             self.pad = Some(window);
         }
@@ -92,7 +100,7 @@ macro_rules! implement_listeners {
             if let Some(handler) = &self.scroll_down_handler {
                 return handler(t, tx); // Call the function if it exists
             }
-            LOG!("FALSE");
+            // LOG!("FALSE");
             Ok(false)
         }
     };
@@ -101,6 +109,7 @@ macro_rules! implement_listeners {
 pub struct Window {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
+    visited: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -136,6 +145,7 @@ impl Window {
                 starty: 0,
                 scrollx: 0,
                 scrolly: 0,
+                lines: 0,
                 initial_startx: startx,
                 initial_starty: starty,
                 display_height,
@@ -143,6 +153,7 @@ impl Window {
             },
             win: None,
             pad: None,
+            visited: false,
             create_win: false,
             styles: css_styles,
             left_click_handler: None,
@@ -217,9 +228,133 @@ impl DisplayContent for Window {
     }
 }
 
+pub struct ScrollView {
+    win: Option<WINDOW>,
+    pad: Option<WINDOW>,
+    visited: bool,
+    title: Option<String>,
+    children: Vec<Box<dyn DisplayContent>>,
+    dimension: Dimension,
+    create_win: bool,
+    styles: Vec<(STYLETYPE, attr_t)>,
+    scroll_up_handler: Option<Arc<dyn Fn(&mut State,  Arc<Sender<Message>>) -> Result<bool, String>>>,
+    scroll_down_handler: Option<Arc<dyn Fn(&mut State,  Arc<Sender<Message>>) -> Result<bool, String>>>,
+}
+
+impl ScrollView {
+    /**
+       if display_height = -1 expands to last of the screen
+       Similarly for width
+    */
+    pub fn new(
+        title: String,
+        startx: i32,
+        starty: i32,
+        display_height: DimensionType,
+        display_width: DimensionType,
+        style: Option<&HashMap<String, &dyn Any>>,
+        css_styles: Vec<(STYLETYPE, attr_t)>,
+    ) -> ScrollView {
+        let mut win = ScrollView {
+            children: vec![],
+            title: Some(title),
+            dimension: Dimension {
+                height: 0,
+                width: 0,
+                startx: 0,
+                starty: 0,
+                scrollx: 0,
+                scrolly: 0,
+                lines: 0,
+                initial_startx: startx,
+                initial_starty: starty,
+                display_height,
+                display_width,
+            },
+            win: None,
+            pad: None,
+            visited: false,
+            create_win: false,
+            styles: css_styles,
+            scroll_up_handler: None,
+            scroll_down_handler: None,
+        };
+        match style {
+            Some(style) => {
+                if style.contains_key("with_border") {
+                    let with_border: &&dyn Any = style.get("with_border").expect("msg");
+                    if with_border.is::<bool>() {
+                        win.create_win = *with_border.downcast_ref::<bool>().unwrap();
+                    }
+                }
+                if let Some(scroll_up_handler) = style.get("scroll_up") {
+                    if let Some(handler) = scroll_up_handler
+                        .downcast_ref::<Arc<dyn Fn(&mut State,  Arc<Sender<Message>>) -> Result<bool, String>>>()
+                    {
+                        win.scroll_up_handler = Some(Arc::clone(handler));
+                    }
+                }
+                if let Some(scroll_down_handler) = style.get("scroll_down") {
+                    if let Some(handler) = scroll_down_handler
+                        .downcast_ref::<Arc<dyn Fn(&mut State,  Arc<Sender<Message>>) -> Result<bool, String>>>()
+                    {
+                        win.scroll_down_handler = Some(Arc::clone(handler));
+                    }
+                }
+            }
+            None => {}
+        }
+        // win.re_initialize_win(height, width);
+        win
+    }
+}
+
+impl DisplayContent for ScrollView {
+    implement_getters_setters!();
+
+    // implement_listeners!();
+
+    fn scroll_down(&mut self, _: &mut State, tx_frontend: Arc<Sender<Message>>) -> Result<bool, String> {
+        let len = self.get_children().len();
+        let visited = self.get_visited();
+        let dim = self.get_dim_unmut();
+        if visited && (dim.height > 2 && len as i32 - dim.height >= dim.scrolly as i32 ) || (len as i32 - dim.height >= dim.scrolly as i32 && dim.height <= 2) {
+            self.get_dim().scrolly += 1;
+            let _ = tx_frontend.send(Message {
+                content: None,
+                mtype: MessageType::RELOADSTORAGE,
+            });
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn scroll_up(&mut self, _: &mut State, tx_frontend: Arc<Sender<Message>>) -> Result<bool, String> {
+        let visited = self.get_visited();
+        // LOG!(format!("{}", visited));
+        if visited && 1 <= self.get_dim_unmut().scrolly as usize {
+            self.get_dim().scrolly -= 1;
+            let _ = tx_frontend.send(Message {
+                content: None,
+                mtype: MessageType::RELOADSTORAGE,
+            });
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn display_state(&mut self, state: &Item) -> Result<(), NulError> {
+        // genNulError!();
+        Ok(())
+    }
+}
+
 pub struct TextBox {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
+    visited: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -254,6 +389,7 @@ impl TextBox {
                 starty: 0,
                 scrollx: 0,
                 scrolly: 0,
+                lines: 0,
                 initial_startx: startx,
                 initial_starty: starty,
                 display_height,
@@ -261,6 +397,7 @@ impl TextBox {
             },
             win: None,
             pad: None,
+            visited: false,
             create_win: false,
             styles: css_styles,
             left_click_handler: None,
@@ -332,8 +469,16 @@ impl DisplayContent for TextBox {
                 &format!("")
             }
         };
-        let pad = self.pad.expect("Empty pad : TextBox");
-        wprintw(pad, &value)?;
+        // let pad = self.pad.expect(&format!("Empty pad : TextBox {}", value));
+        match self.pad {
+            Some(pad) => {
+
+                wprintw(pad, &value)?;
+            },
+            None => {
+              // LOG!(format!("TEXT PAD NOT FOUND {}",value));
+            },
+        }
 
         Ok(())
     }
@@ -342,6 +487,7 @@ impl DisplayContent for TextBox {
 pub struct FileInfoWin {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
+    visited: bool,
     title: Option<String>,
     create_win: bool,
     children: Vec<Box<dyn DisplayContent>>,
@@ -383,6 +529,7 @@ impl FileInfoWin {
                 starty: 0,
                 scrollx: 0,
                 scrolly: 0,
+                lines: 0,
                 initial_startx: startx,
                 initial_starty: starty,
                 display_height,
@@ -390,6 +537,7 @@ impl FileInfoWin {
             },
             win: None,
             pad: None,
+            visited: false,
             create_win: false,
             styles,
         };
@@ -413,8 +561,8 @@ impl DisplayContent for FileInfoWin {
                 &format!("")
             }
         };
-        let pad = self.pad.expect("Empty pad : TextBox");
-        wprintw(pad, &value)?;
+        // let pad = self.pad.expect("Empty pad : TextBox");
+        // wprintw(pad, &value)?;
 
         Ok(())
     }
@@ -423,6 +571,7 @@ impl DisplayContent for FileInfoWin {
 pub struct StorageWin {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
+    visited: bool,
     title: Option<String>,
     create_win: bool,
     children: Vec<Box<dyn DisplayContent>>,
@@ -452,6 +601,7 @@ impl StorageWin {
                 starty: 0,
                 scrollx: 0,
                 scrolly: 0,
+                lines: 0,
                 initial_startx: startx,
                 initial_starty: starty,
                 display_height,
@@ -459,6 +609,7 @@ impl StorageWin {
             },
             win: None,
             pad: None,
+            visited: false,
             create_win: false,
             styles,
         };
@@ -468,6 +619,7 @@ impl StorageWin {
     }
 
     fn expand(&mut self, len: usize) {
+      // LOG!("Expan");
         self.children.clear();
 
         let sort_by_name: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
@@ -533,11 +685,11 @@ impl StorageWin {
             vec![],
         )));
 
-        let mut storage_inner_window = Box::new(Window::new(
+        let mut storage_inner_window = Box::new(ScrollView::new(
             format!(""),
             0,
             -1,
-            DimensionType::DIMENS(len as i32),
+            DimensionType::DIMENS(len  as i32 + 1),
             DimensionType::DIMENS(-1),
             None,
             vec![],
@@ -568,7 +720,6 @@ impl StorageWin {
     }
 
     fn collapse(&mut self) {
-        // LOG!(format!("To Collaps: "));
         self.children.clear();
 
         for _ in 0..3 {
@@ -620,17 +771,20 @@ impl DisplayContent for StorageWin {
                         Dirent::AGGREGATE(mutex) => {
                             let mut agg = mutex.lock().unwrap();
                             let dim = self.get_dim();
+                          // LOG!(format!("EXP: {} {}",agg.expanded, agg.common_name));
                             if !agg.expanded {
+                              // LOG!(format!("To Expand: {}", agg.common_name));
                                 let direntrys = &agg.dirents;
                                 let len = direntrys.len();
                                 dim.display_height = DimensionType::DIMENS(3 + len as i32);
                                 self.expand(len);
                             } else {
+                              // LOG!(format!("To Collaps: {}", agg.common_name));
                                 dim.display_height = DimensionType::DIMENS(1);
                                 self.collapse();
                             }
                             agg.expanded = !agg.expanded;
-
+                          // LOG!("SENDING");
                             let _ = tx_frontend.send(Message {
                                 content: None,
                                 mtype: MessageType::RELOADSTORAGE,
@@ -656,6 +810,7 @@ impl DisplayContent for StorageWin {
 pub struct HeaderWin {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
+    visited: bool,
     title: Option<String>,
     create_win: bool,
     children: Vec<Box<dyn DisplayContent>>,
@@ -677,6 +832,7 @@ impl HeaderWin {
         sort_by_size: Arc<dyn Fn(&mut State,  Arc<Sender<Message>>) -> Result<bool, String>>,
         styles: Vec<(STYLETYPE, attr_t)>,
     ) -> HeaderWin {
+        // LOG!("=------");
         let mut children: Vec<Box<dyn DisplayContent>> = vec![];
         for _ in 0..3 {
             children.push(Box::new(TextBox::new(
@@ -719,6 +875,7 @@ impl HeaderWin {
                 starty: 0,
                 scrollx: 0,
                 scrolly: 0,
+                lines: 0,
                 initial_startx: startx,
                 initial_starty: starty,
                 display_height,
@@ -726,6 +883,7 @@ impl HeaderWin {
             },
             win: None,
             pad: None,
+            visited: false,
             create_win: false,
             styles,
         };
@@ -742,7 +900,7 @@ impl DisplayContent for HeaderWin {
     }
 
     fn left_click(&mut self, _: &mut State, _: Arc<Sender<Message>>) -> Result<bool, String> {
-        LOG!("J");
+        // LOG!("J");
         Ok(false)
     }
 }
@@ -750,6 +908,7 @@ impl DisplayContent for HeaderWin {
 pub struct Button {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
+    visited: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -784,6 +943,7 @@ impl Button {
                 starty: 0,
                 scrollx: 0,
                 scrolly: 0,
+                lines: 0,
                 initial_startx: startx,
                 initial_starty: starty,
                 display_height,
@@ -791,6 +951,7 @@ impl Button {
             },
             win: None,
             pad: None,
+            visited: false,
             create_win: false,
             styles: css_styles,
             left_click_handler: None,
@@ -862,8 +1023,15 @@ impl DisplayContent for Button {
             }
             Item::SORT(sort_button) => &sort_button.name,
         };
-        let pad = self.pad.expect("Empty pad : TextBox");
-        wprintw(pad, &value)?;
+        match self.pad {
+            Some(pad) => {
+
+                wprintw(pad, &value)?;
+            },
+            None => {
+              // LOG!(format!("BUTTON PAD NOT FOUND {}",value));
+            },
+        }
 
         Ok(())
     }

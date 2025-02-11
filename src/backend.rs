@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{ read_dir, FileType, Metadata};
 use std::io::Error;
+use std::fs;
 use std::os::unix::fs::{FileTypeExt, MetadataExt as UMetaExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
@@ -12,9 +13,10 @@ use std::{io, thread, vec};
 
 use chrono::{DateTime, Utc};
 use models::data_models::{DirEntry, Directory, Dirent, AGGREGATOR};
+use ncurses::{is_nodelay, stdscr};
 
 use crate::models::models::{Item, Message, MessageType, SortButton, State, WinType};
-use crate::{models, total_size_to_string};
+use crate::{models, total_size_to_string, LOG};
 
 fn mode_to_octal(mut mode: u32) -> String {
     let mut octal = format!("");
@@ -264,7 +266,6 @@ fn read_directory(
             i += 1;
         }
     }
-
     for thread in threads {
         thread.join().map_err(|e| format!("{:?}", e))?;
     }
@@ -440,8 +441,8 @@ fn aggregate_n_send(
     start: usize,
     range: i32,
 ) {
-    // LOG!(format!("agg {:?}", directory.name));
     aggregate(content_with_lock, directory, start, range);
+    LOG!("Hr");
     let _ = tx_backend.send(Message {
         content: None,
         mtype: MessageType::READDIR,
@@ -536,7 +537,7 @@ pub fn run_backend(
     tx_backend: Sender<Message>,
 ) {
     let folder_content = State::LIST(vec![]);
-    let root = Arc::new("/home/alonot/".to_owned());
+    let root = Arc::new("/home/alonot".to_owned());
     let storage_content = State::LIST(vec![
         State::LIST(vec![
             State::VALUE(Item::STRING(format!("Name"))),
@@ -600,6 +601,7 @@ pub fn run_backend(
                         } else {
                             Arc::new(format!("{}{}", curr_dir_name, dir))
                         };
+                        LOG!(format!("READ: {} ", is_nodelay(stdscr())));
                         directory = match read_directory(
                             next_dir,
                             no_threads_lc,
@@ -632,7 +634,11 @@ pub fn run_backend(
                                         if new_path.eq(&name) {
                                             same_dir = true;
                                         }
-                                        Arc::new(new_path)
+                                        if new_path.eq("/") {
+                                            Arc::new(format!("{}",new_path))
+                                        } else {
+                                            Arc::new(format!("{}/",new_path))
+                                        }
                                     }
                                     None => {
                                         same_dir = true;
@@ -642,6 +648,7 @@ pub fn run_backend(
                             }
                             None => root.clone(),
                         };
+                        LOG!(format!("SAME: {} {}",same_dir, is_nodelay(stdscr())));
                         if !same_dir {
                             directory = match read_directory(
                                 prev_dir,
@@ -650,7 +657,7 @@ pub fn run_backend(
                                 &tx_backend,
                             ) {
                                 Ok(val) => {
-                                    // LOG!(format!("GOT {}", val.name));
+                                    LOG!(format!("GOT {}", val.name));
                                     Some(val)
                                 }
                                 Err(e) => {
@@ -659,6 +666,7 @@ pub fn run_backend(
                                 }
                             };
                         }
+                        
                     }
                     MessageType::SORTBYNAME => {
                         let dirent = match received.content {
@@ -751,6 +759,7 @@ pub fn run_backend(
                         }
                     }
                     MessageType::RELOADSTORAGE => {
+                      // LOG!("Hro");
                         let _ = tx_backend.send(Message {
                             content: None,
                             mtype: MessageType::RELOADSTORAGE,
@@ -797,6 +806,13 @@ pub fn run_backend(
                             None => {},
                         }
                     },
+                    MessageType::RELOAD => {
+                        let _ = tx_backend.send(Message {
+                            content: None,
+                            mtype: MessageType::RELOAD,
+                        });
+                    }
+                    _ => {}
                 }
             }
         }

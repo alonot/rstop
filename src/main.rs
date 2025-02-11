@@ -6,45 +6,43 @@ mod util;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs;
-use std::process::exit;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::RwLock;
+use std::thread::sleep;
+use std::time::Duration;
 use std::{ffi::NulError, sync::Arc};
 
 use backend::run_backend;
 use models::models::{
     DimensionType, DisplayContent, Item, Message, MessageType, Screen, State, WinType, STYLETYPE,
 };
-use models::windows::{FileInfoWin, HeaderWin, StorageWin, TextBox, Window};
+use models::windows::{FileInfoWin, HeaderWin, ScrollView, StorageWin, TextBox, Window};
 use ncurses::{
-    clear, curs_set, endwin, getch, getmouse, initscr, keypad, mmask_t, mouseinterval,
-    mousemask,nodelay, noecho, refresh, stdscr,
-     BUTTON1_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, KEY_MOUSE,
-    KEY_RESIZE, MEVENT, OK,
+    cbreak, clear, curs_set, doupdate, endwin, flushinp, getch, getmouse, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, stdscr, timeout, BUTTON1_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, ERR, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
 };
 
 #[macro_export]
 macro_rules! LOG {
     ($val:expr) => {
         let val = fs::read_to_string("log.txt").map_or(format!(""), |f| f);
-        fs::write("log.txt", format!("{val}\nLOGGED: {:?} ", $val));
+        let _ = fs::write("log.txt", format!("{val}\nLOGGED: {:?} ", $val));
     };
 }
 
 fn init_screen(
     screen: &mut Screen,
     content_with_lock: Arc<RwLock<HashMap<WinType, State>>>,
-    tx_frontend: Arc<Sender<Message>>,
+    _: Arc<Sender<Message>>,
 ) -> Result<(), NulError> {
-    initscr();
     // cbreak();
     clear();
     curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
-    // cbreak();
+    cbreak();
     keypad(stdscr(), true);
     noecho();
     refresh();
     screen.clear_n_new();
+    nodelay(stdscr(), true); // make getch non-blocking
     screen.update_height();
     let width_30p = (0.3 * screen.dim.width as f32).floor() as i32;
     let height_30p = (0.3 * screen.dim.height as f32).floor() as i32;
@@ -52,10 +50,9 @@ fn init_screen(
     let mut style: HashMap<String, &dyn Any> = HashMap::new();
     style.insert("with_border".to_owned(), &true);
 
-
     screen.add_window(
         WinType::FOLDERWIN,
-        Box::new(Window::new(
+        Box::new(ScrollView::new(
             format!("Folder"),
             0,
             0,
@@ -77,13 +74,14 @@ fn init_screen(
             vec![(STYLETYPE::FULLBORDER, 0)],
         )),
     );
+
     let content: std::sync::RwLockReadGuard<'_, HashMap<WinType, State>> =
         content_with_lock.read().unwrap();
     let folder_content = content.get(&WinType::FOLDERWIN).expect("Expected folder");
 
     screen.add_window(
         WinType::STORAGEWIN,
-        Box::new(Window::new(
+        Box::new(ScrollView::new(
             "Storage".to_string(),
             width_30p,
             height_30p - 1,
@@ -97,7 +95,7 @@ fn init_screen(
     screen.refresh_screen(true)?;
 
     let clicked: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> = Arc::new(
-         |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
+        |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
             match t {
                 State::LIST(_) => {}
                 State::VALUE(item) => {
@@ -185,7 +183,7 @@ fn init_screen(
 
     let sort_by_size: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
         Arc::new(
-         |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
+            |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
                 match t {
                     State::LIST(_) => {}
                     State::VALUE(item) => {
@@ -209,7 +207,7 @@ fn init_screen(
 
     match folder_content {
         State::LIST(states) => {
-            states.iter().enumerate().for_each(|(ind, _)| {
+            states.iter().for_each(|_| {
                 folderwindow.add_child(Box::new(TextBox::new(
                     0,
                     -1,
@@ -253,7 +251,7 @@ fn init_screen(
         vec![],
     )));
 
-    let mut storage_inner_window = Box::new(Window::new(
+    let mut storage_inner_window = Box::new(ScrollView::new(
         format!(""),
         0,
         -1,
@@ -330,6 +328,8 @@ fn main() -> Result<(), NulError> {
 
     let mut screen = Screen::new();
 
+    initscr();
+
     init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
 
     let _ = tx_frontend_arc
@@ -339,49 +339,61 @@ fn main() -> Result<(), NulError> {
         })
         .map_err(|e| format!("{e:?}"));
 
-    nodelay(stdscr(), true); // make getch non-blocking
     mousemask(
-        ( BUTTON1_PRESSED | BUTTON3_PRESSED | BUTTON4_PRESSED | BUTTON5_PRESSED) as mmask_t,
+        (BUTTON1_PRESSED | BUTTON3_PRESSED | BUTTON4_PRESSED | BUTTON5_PRESSED) as mmask_t,
         None,
     );
     mouseinterval(0);
 
-    loop {
-        match rx_backend.try_recv() {
-            Ok(message) => {
-                // LOG!("Recieved");
-                match message.mtype {
-                    MessageType::RELOADSTORAGE => {
-                        screen.refresh_screen(true)?;
-                        let content_without_lock = (*content).read().unwrap();
-                        screen.populate(content_without_lock)?;
-                        // // turn this "true" atlast will result in flushing of the value populated before
-                        screen.refresh_screen(false)?;
-                    }
-                    _ => {
-                        init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
-                    }
-                }
-                // println!("{:?} ",message.mtype);
-                Ok(())
-            }
-            Err(e) => {
-                match e {
-                    std::sync::mpsc::TryRecvError::Empty => {
-                        /*Do nothing */
-                        Ok(())
-                    }
-                    std::sync::mpsc::TryRecvError::Disconnected => {
-                        println!("{:?}", e);
-                        // later propogate or handle the error correctly
-                        exit(1);
-                        Ok(())
-                    }
-                }
-            }
-        }?;
+    nodelay(stdscr(), true); // make getch non-blocking
+    LOG!(format!("is_delay value {}", is_nodelay(stdscr())));
 
+    loop {
+        // LOG!("Hello");
+        rx_backend.try_iter().try_for_each(|message| {
+            LOG!(format!("Recieved {:?}", message.mtype));
+            match message.mtype {
+                MessageType::RELOADSTORAGE => {
+                    // LOG!("RELOADSTORAGE");
+                    screen.refresh_screen(true)?;
+                    let content_without_lock = (*content).read().unwrap();
+                    screen.populate(content_without_lock)?;
+                    // // turn this "true" atlast will result in flushing of the value populated before
+                    screen.refresh_screen(false)?;
+                    nodelay(stdscr(), true); // make getch non-blocking
+                }
+                MessageType::RELOAD => {
+                    clear();
+                    nodelay(stdscr(), true); // make getch non-blocking
+                    // refresh();
+                    screen.clear_screen()?;
+                    let content_without_lock = (*content).read().unwrap();
+                    screen.populate(content_without_lock)?;
+                    // // turn this "true" atlast will result in flushing of the value populated before
+                    screen.refresh_screen(false)?;
+                }
+                MessageType::READDIR => {
+                    LOG!("READDIR START");
+                    init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
+                    LOG!("READDIR END");
+                }
+                _ => {}
+            }
+            // println!("{:?} ",message.mtype);
+            Ok(())
+        })?;
+        // flushinp();
+        // timeout(0);
+        // LOG!(format!("GOING {}", is_nodelay(stdscr())));
         let ch = getch();
+        if ch == ERR {
+            // LOG!("errr");
+            // flushinp();
+        } else {
+            // LOG!(format!("getch value {}", ch));
+            // LOG!(format!("is_delay value {}", is_nodelay(stdscr())));
+        }
+
         if ch == KEY_RESIZE {
             screen.update_height();
             init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
@@ -398,24 +410,22 @@ fn main() -> Result<(), NulError> {
             };
 
             if getmouse(&mut event) == OK {
-                LOG!(format!(
-                    "5:{} 4:{} 1:{} 2:{} {}",
-                    event.bstate & BUTTON5_PRESSED as u32,
-                    event.bstate & BUTTON4_PRESSED as u32,
-                    event.bstate & BUTTON1_PRESSED as u32,
-                    event.bstate & BUTTON3_PRESSED as u32,
-                    event.id
-                ));
-                screen.checkMouseClick(
+                // LOG!(format!(
+                //     "5:{} 4:{} 1:{} 2:{} {}",
+                //     event.bstate & BUTTON5_PRESSED as u32,
+                //     event.bstate & BUTTON4_PRESSED as u32,
+                //     event.bstate & BUTTON1_PRESSED as u32,
+                //     event.bstate & BUTTON3_PRESSED as u32,
+                //     event.id
+                // ));
+                let _ = screen.checkMouseClick(
                     content.write().unwrap(),
                     &mut event,
                     tx_frontend_arc.clone(),
                 );
+                LOG!("Finished");
             }
         }
-        // checking for mouseclicks in respective windows
-        // timeout(10);
-        // fs::write("logs.txt", "here");
     }
 
     endwin();

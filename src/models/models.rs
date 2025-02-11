@@ -7,7 +7,7 @@ use std::{
 };
 
 use ncurses::{
-    attr_t, box_, clear, getmaxx, getmaxyx, getyx, keypad, ll::WINDOW, mvwhline, mvwprintw, mvwvline, newpad, newwin, nodelay, prefresh, refresh, stdscr, waddch, wmove, wprintw, wrefresh, ACS_DARROW, ACS_HLINE, ACS_VLINE, BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, LINES, MEVENT
+    attr_t, box_, clear, doupdate, getmaxx, getmaxyx, getyx, keypad, ll::WINDOW, mvwhline, mvwprintw, mvwvline, newpad, newwin, nodelay, prefresh, refresh, stdscr, waddch, wclear, wmove, wprintw, wrefresh, ACS_DARROW, ACS_HLINE, ACS_VLINE, BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, LINES, MEVENT
 };
 
 use crate::{total_size_to_string, LOG};
@@ -31,12 +31,14 @@ impl Screen {
             starty: 0,
             scrollx: 0,
             scrolly: 0,
+            lines: 0,
             initial_startx: -1,
             initial_starty: -1,
             display_height: DimensionType::DIMENS(-1),
             display_width: DimensionType::DIMENS(-1),
         };
     }
+
     pub fn new() -> Screen {
         Screen {
             windows: HashMap::new(),
@@ -48,6 +50,7 @@ impl Screen {
                 starty: 0,
                 scrollx: 0,
                 scrolly: 0,
+                lines: 0,
                 initial_startx: -1,
                 initial_starty: -1,
                 display_height: DimensionType::DIMENS(-1),
@@ -82,7 +85,19 @@ impl Screen {
         let mut cumx = 0;
         let mut cumy = 0;
         self.windows.iter_mut().try_for_each(|(_, win)| {
-            (cumx, cumy) = win.display_content(pdimension, cumx, cumy)?;
+            (cumx, cumy) = win.display_content(pdimension, cumx, cumy, 0)?;
+            Ok(())
+        })?;
+        doupdate();
+        Ok(())
+    }
+    
+    pub fn clear_screen(&mut self) -> Result<(), NulError> {
+        clear();
+        refresh();
+        wmove(stdscr(), 0, 0);
+        self.windows.iter_mut().try_for_each(|(_, win)| {
+            win.clear_win()?;
             Ok(())
         })?;
         Ok(())
@@ -127,6 +142,7 @@ pub struct Dimension {
     pub starty: i32,
     pub scrollx: i32,
     pub scrolly: i32,
+    pub lines: u32,
     pub initial_startx: i32,
     pub initial_starty: i32,
     pub display_height: DimensionType,
@@ -144,7 +160,7 @@ pub fn apply_stylying(win: WINDOW, dim: &Dimension, styles: &Vec<(STYLETYPE, att
             }
             STYLETYPE::TOPBORDER => {
                 mvwhline(win, 0 - *attr as i32, 0, ACS_HLINE(), dim.width);
-                LOG!(format!("{} {}", y, x));
+                // LOG!(format!("{} {}", y, x));
             }
             STYLETYPE::BOTTOMBORDER => {
                 mvwhline(win, dim.height - *attr as i32, 0, ACS_HLINE(), dim.width);
@@ -170,6 +186,8 @@ pub trait DisplayContent {
     fn get_win(&self) -> Option<WINDOW>;
     fn get_pad(&self) -> Option<WINDOW>;
     fn set_win(&mut self, window: WINDOW);
+    fn set_visited(&mut self, _: bool);
+    fn get_visited(&mut self) -> bool;
     fn set_pad(&mut self, window: WINDOW);
     fn clear_for_resize(&mut self);
     fn get_title(&self) -> Option<String>;
@@ -204,6 +222,15 @@ pub trait DisplayContent {
         Ok(false)
     }
 
+    fn set_visited_all(&mut self,
+        val: bool) {
+        self.set_visited(val);
+        self.get_children().iter_mut().for_each(|child| {
+            child.set_visited_all(val);
+        });
+    }
+
+
     fn calculate_next_states(&mut self,dir_info: &Arc<Dirent>) -> Vec<State> {
         // LOG!(format!("dirent"));
         let dirent = &**dir_info;
@@ -225,9 +252,10 @@ pub trait DisplayContent {
         match dirent {
             Dirent::AGGREGATE(mutex) => {
                 let agg = mutex.lock().unwrap();
-              // LOG!(format!("Expanded: {}", agg.expanded));
+            // // LOG!(format!("Expanded: {} {}", agg.expanded, agg.common_name));
                 if agg.expanded {
                     let name_clone = Arc::new(agg.common_name.clone());
+                  // LOG!(format!("Len: {}", agg.dirents.len()));
                     next_states = vec![
                         State::VALUE(Item::STRING(format!("Close X"))),
                         State::LIST(vec![
@@ -326,13 +354,13 @@ pub trait DisplayContent {
         let width = dimension.width + startx;
         if event.x >= startx && event.y >= starty && event.x <= width && event.y <= height {
             let mut res: bool = false;
-            LOG!(format!(
-                "5:{} {} {} {}",
-                event.bstate & BUTTON5_PRESSED as u32,
-                event.id,
-                starty,
-                height
-            ));
+            // LOG!(format!(
+            //     "5:{} {} {} {}",
+            //     event.bstate & BUTTON5_PRESSED as u32,
+            //     event.id,
+            //     starty,
+            //     height
+            // ));
             // numbers decided by multiple loggings
             if event.bstate & BUTTON1_PRESSED as u32 == 2 {
                 res = self.left_click(t, tx_frontend)?
@@ -350,10 +378,10 @@ pub trait DisplayContent {
             if res {
                 event.id = -1;
             }
-            LOG!(format!(
-                "{}",
-                event.id,
-            ));
+            // LOG!(format!(
+            //     "{}",
+            //     event.id,
+            // ));
         }
         Ok(())
     }
@@ -395,6 +423,7 @@ pub trait DisplayContent {
             keypad(win, true);
             self.set_win(win);
         }
+        // LOG!("Here");
         if self.get_children().is_empty() {
 
             let pad = newpad(height + 1, width + 1);
@@ -410,6 +439,7 @@ pub trait DisplayContent {
         parent: Option<Dimension>,
         mut cumulative_startx: i32,
         mut cumulative_starty: i32,
+        parent_scrolly: i32,
     ) -> Result<(i32, i32), NulError> {
         let mut pdimension: Option<Dimension> = None;
         match parent {
@@ -419,14 +449,16 @@ pub trait DisplayContent {
 
                 pdimension = Some(*self.get_dim());
             }
-            None => {}
+            None => {
+                self.set_visited(true);
+            }
         }
         let window = self.get_win();
 
         let pad = self.get_pad();
         let title = self.get_title();
         let styles = self.get_style();
-        let dimension = self.get_dim_unmut();
+        // let dimension = self.get_dim_unmut();
         match window {
             Some(window) => {
                 apply_stylying(window, self.get_dim_unmut(), styles);
@@ -476,8 +508,8 @@ pub trait DisplayContent {
                 // wprintw(val, &format!("__ {} {} {} {} {} {}", dimension.starty + dimension.height, dimension.starty >= 37, dimension.starty , dimension.width, cumulative_starty, cumulative_startx));
                 prefresh(
                     val,
-                    dimension.scrollx,
-                    dimension.scrolly,
+                    0,
+                    0,
                     dimension.starty + 1,
                     dimension.startx + 1,
                     dimension.starty + win_height,
@@ -491,12 +523,52 @@ pub trait DisplayContent {
         let mut cumy = 0;
         let scrollx = dimension.scrollx;
         let scrolly = dimension.scrolly;
+        let width = dimension.width;
         // reprint the values from the datastructure to the pad
         self.get_children().iter_mut().skip(scrollx as usize). skip(scrolly as usize).try_for_each(|child| {
-            (cumx, cumy) = child.display_content(pdimension, cumx, cumy)?;
+            (cumx, cumy) = child.display_content(pdimension, cumx, cumy, 0)?;
+            Ok(())
+        })?;
+        self.get_children().iter_mut().take(scrolly as usize).try_for_each(|child| {
+            child.set_visited_all(false);
             Ok(())
         })?;
         Ok((cumulative_startx, cumulative_starty))
+    }
+
+    fn clear_win(
+        &mut self,
+    ) -> Result<(), NulError> {
+        let window = self.get_win();
+
+        let pad = self.get_pad();
+        let title = self.get_title();
+        let styles = self.get_style();
+        // let dimension = self.get_dim_unmut();
+        match window {
+            Some(window) => {
+                wclear(window);
+                wmove(window, 0, 0);
+                wrefresh(window);
+            }
+            None => {}
+        }
+
+        // mvwprintw(window, 0, 0, &format!("{} {}\n", win_height, win_width))?;
+        match pad {
+            Some(val) => {
+                wclear(val);
+                wmove(val, 0, 0);
+                wrefresh(val);
+            }
+            None => {}
+        }
+        // reprint the values from the datastructure to the pad
+        self.get_children().iter_mut().try_for_each(|child| {
+            child.clear_win()?;
+            Ok(())
+        })?;
+        Ok(())
     }
 
     /**
@@ -529,25 +601,39 @@ pub trait DisplayContent {
 
         if win_width < 0 {
             win_width = parent.width - initial_startx;
+        } else  if win_width > parent.width {
+            win_width = parent.width - 1;
         }
         if win_height < 0 {
             win_height = parent.height - initial_starty;
+        } else if win_height > parent.height {
+            win_height = parent.height - 1;
         }
+
+        if win_height + initial_starty >= parent.height - 1 {
+            if dimension.initial_starty == -2  {
+
+                cumulative_startx += win_width;
+                cumulative_starty = 0;
+                initial_startx = cumulative_startx;
+                initial_starty = cumulative_starty;
+            } else {
+                win_height = parent.height - initial_starty
+            }
+        }
+        if win_width + initial_startx >= parent.width - 1 {
+            if dimension.initial_startx == -2 {
+                cumulative_starty += win_height;
+                cumulative_startx = 0;
+                initial_starty = cumulative_starty;
+                initial_startx = cumulative_startx;
+            } else {
+                win_width = parent.width - initial_startx
+            }
+        }
+
         dimension.height = win_height;
         dimension.width = win_width;
-
-        if dimension.initial_starty == -2 && win_height + initial_starty >= parent.height - 1 {
-            cumulative_startx += win_width;
-            cumulative_starty = 0;
-            initial_startx = cumulative_startx;
-            initial_starty = cumulative_starty;
-        }
-        if dimension.initial_startx == -2 && win_width + initial_startx >= parent.width - 1 {
-            cumulative_starty += win_height;
-            cumulative_startx = 0;
-            initial_starty = cumulative_starty;
-            initial_startx = cumulative_startx;
-        }
 
         // NOTE: Note best way wey must either substract 2 if parent have window else not but that info need to be passed all the way from top to here
         // this 4 is just hardcoded
@@ -555,12 +641,13 @@ pub trait DisplayContent {
             // exeeds the screen so do not render this
             let x = getmaxx(stdscr());
             initial_startx = x;
-
         }
 
         dimension.startx = initial_startx + parent.startx;
         dimension.starty = initial_starty + parent.starty;
 
+        // dimension.scrolly = dimension.starty;
+        // LOG!(format!("{}", dimension.starty));
 
         if dimension.initial_startx < 0 {
             cumulative_startx += win_width;
@@ -602,7 +689,7 @@ pub struct DirInfo {
     path: Arc<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Message {
     pub mtype: MessageType,
     pub content: Option<Arc<String>>,
@@ -615,6 +702,7 @@ pub enum MessageType {
     SORTBYNAME,
     SORTBYSIZE,
     RELOADSTORAGE,
+    RELOAD,
     CHANGEFILEINFO
 }
 
