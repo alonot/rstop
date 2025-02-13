@@ -13,13 +13,14 @@ use std::{ffi::NulError, sync::Arc};
 
 use backend::run_backend;
 use models::models::{
-    DimensionType, DisplayContent, Item, Message, MessageType, Screen, State, WinType, STYLETYPE,
+    DimensionType, DisplayContent, Item, Message, MessageType, Screen, Selected, State, WinType,
+    STYLETYPE,
 };
 use models::windows::{FileInfoWin, HeaderWin, ScrollView, StorageWin, TextBox, Window};
 use ncurses::{
-    attr_on, bkgd, cbreak, clear, curs_set, endwin, getch, getmouse, has_colors, init_color, init_pair, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, start_color, stdscr, use_default_colors, wbkgd, ALL_MOUSE_EVENTS, COLOR_BLACK, COLOR_BLUE, COLOR_CYAN, COLOR_GREEN, COLOR_MAGENTA, COLOR_PAIR, COLOR_RED, COLOR_WHITE, COLOR_YELLOW, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
+    attr_on, bkgd, cbreak, clear, curs_set, endwin, getch, getmouse, has_colors, init_color, init_pair, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, start_color, stdscr, use_default_colors, wbkgd, ALL_MOUSE_EVENTS, BUTTON1_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, COLOR_BLACK, COLOR_BLUE, COLOR_CYAN, COLOR_GREEN, COLOR_MAGENTA, COLOR_PAIR, COLOR_RED, COLOR_WHITE, COLOR_YELLOW, ERR, KEY_DOWN, KEY_ENTER, KEY_LEFT, KEY_MOUSE, KEY_RESIZE, KEY_RIGHT, KEY_UP, MEVENT, OK
 };
-use util::{*};
+use util::*;
 
 #[macro_export]
 macro_rules! LOG {
@@ -33,6 +34,7 @@ fn init_screen(
     screen: &mut Screen,
     content_with_lock: Arc<RwLock<HashMap<WinType, State>>>,
     _: Arc<Sender<Message>>,
+    selected: &mut Selected,
 ) -> Result<(), NulError> {
     // cbreak();
     clear();
@@ -42,7 +44,7 @@ fn init_screen(
     noecho();
     start_color();
     initialize_colors();
-    use_default_colors();   
+    use_default_colors();
     refresh();
     bkgd(COLOR_PAIR(PAIR_WHITE_BLACK));
     screen.clear_n_new();
@@ -63,8 +65,11 @@ fn init_screen(
             DimensionType::DIMENS(-1),
             DimensionType::PERCEN(0.3),
             Some(&style),
-            vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_GOLD_BLACK)),(STYLETYPE::FULLBORDER, 0)],
-            vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_GOLD_BLACK))]
+            vec![
+                (STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_GOLD_BLACK)),
+                (STYLETYPE::FULLBORDER, 0),
+            ],
+            vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_GOLD_BLACK))],
         )),
     );
     screen.add_window(
@@ -76,8 +81,11 @@ fn init_screen(
             DimensionType::PERCEN(0.3),
             DimensionType::DIMENS(-1),
             Some(&style),
-            vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_TURQUOISE_BLACK)),(STYLETYPE::FULLBORDER, 0)],
-            vec![ (STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_TURQUOISE_BLACK))]
+            vec![
+                (STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_TURQUOISE_BLACK)),
+                (STYLETYPE::FULLBORDER, 0),
+            ],
+            vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_TURQUOISE_BLACK))],
         )),
     );
 
@@ -94,8 +102,11 @@ fn init_screen(
             DimensionType::DIMENS(-1),
             DimensionType::DIMENS(-1),
             Some(&style),
-            vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_GREEN_BLACK)),(STYLETYPE::FULLBORDER, 0)],
-            vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_GREEN_BLACK))]
+            vec![
+                (STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_GREEN_BLACK)),
+                (STYLETYPE::FULLBORDER, 0),
+            ],
+            vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_GREEN_BLACK))],
         )),
     );
 
@@ -132,8 +143,11 @@ fn init_screen(
         DimensionType::DIMENS(4),
         DimensionType::DIMENS(-1),
         Some(&style),
-        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_RED_BLACK )),(STYLETYPE::BOTTOMBORDER, 1)],
-        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_RED_BLACK))]
+        vec![
+            (STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_RED_BLACK)),
+            (STYLETYPE::BOTTOMBORDER, 1),
+        ],
+        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
     ));
 
     current_folder_win.add_child(Box::new(TextBox::new(
@@ -142,8 +156,8 @@ fn init_screen(
         DimensionType::DIMENS(2),
         DimensionType::DIMENS(-1),
         None,
-        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR( PAIR_BLUE_BLACK))],
-        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_BLUE_BLACK))]
+        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_BLUE_BLACK))],
+        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_BLUE_BLACK))],
     )));
 
     let back_clicked: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
@@ -168,7 +182,7 @@ fn init_screen(
         DimensionType::DIMENS(10),
         Some(&style),
         vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
-                vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
+        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
     )));
 
     folderwindow.add_child(current_folder_win);
@@ -186,7 +200,7 @@ fn init_screen(
                     DimensionType::PERCEN(1.),
                     Some(&style),
                     vec![],
-                    vec![]
+                    vec![],
                 )));
             });
         }
@@ -201,7 +215,7 @@ fn init_screen(
         DimensionType::PERCEN(1.),
         None,
         vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_CYAN_BLACK))],
-                vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_CYAN_BLACK))],
+        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_CYAN_BLACK))],
     )));
     filewindow.add_child(Box::new(FileInfoWin::new(
         0,
@@ -209,12 +223,11 @@ fn init_screen(
         DimensionType::DIMENS(-1),
         DimensionType::PERCEN(1.),
         vec![],
-        vec![]
+        vec![],
     )));
 
     let storagewindow = screen.get_window(WinType::STORAGEWIN);
     let storage_content = content.get(&WinType::STORAGEWIN).expect("Expected storage");
-
 
     let sort_by_name: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
         Arc::new(
@@ -262,7 +275,7 @@ fn init_screen(
         sort_by_name,
         sort_by_size,
         vec![],
-        vec![]
+        vec![],
     )));
 
     let mut storage_inner_window = Box::new(ScrollView::new(
@@ -273,7 +286,7 @@ fn init_screen(
         DimensionType::DIMENS(-1),
         None,
         vec![(STYLETYPE::BOTTOMBORDER, 1)],
-        vec![]
+        vec![],
     ));
 
     match storage_content {
@@ -288,7 +301,7 @@ fn init_screen(
                             DimensionType::DIMENS(1),
                             DimensionType::PERCEN(1.),
                             vec![],
-                            vec![]
+                            vec![],
                         )));
                     });
                 }
@@ -300,9 +313,8 @@ fn init_screen(
     storagewindow.add_child(storage_inner_window);
 
     screen.refresh_screen(true)?;
-    let storagewindow = screen.get_window(WinType::STORAGEWIN);
-    // LOG!(format!("STORAGE: {}", storagewindow.get_dim_unmut().width));
-    
+
+    screen.change_bg_selected(selected, PAIR_BLACK_YELLOW, false);
     screen.populate(content)?;
 
     // // turn this "true" atlast will result in flushing of the value populated before
@@ -369,14 +381,14 @@ fn initialize_colors() {
     init_pair(PAIR_CYAN_BLACK, COLOR_CYAN, COLOR_BLACK);
     init_pair(PAIR_MAGENTA_BLACK, COLOR_MAGENTA, COLOR_BLACK);
     init_pair(PAIR_YELLOW_BLACK, COLOR_YELLOW, COLOR_BLACK);
-    
-    init_pair(PAIR_BLACK_WHITE, COLOR_BLACK,COLOR_WHITE );
-    init_pair(PAIR_BLACK_RED, COLOR_BLACK,COLOR_RED );
-    init_pair(PAIR_BLACK_GREEN, COLOR_BLACK,COLOR_GREEN );
-    init_pair(PAIR_BLACK_BLUE, COLOR_BLACK,COLOR_BLUE );
-    init_pair(PAIR_BLACK_CYAN, COLOR_BLACK,COLOR_CYAN );
-    init_pair(PAIR_BLACK_MAGENTA, COLOR_BLACK,COLOR_MAGENTA );
-    init_pair(PAIR_BLACK_YELLOW, COLOR_BLACK,COLOR_YELLOW );
+
+    init_pair(PAIR_BLACK_WHITE, COLOR_BLACK, COLOR_WHITE);
+    init_pair(PAIR_BLACK_RED, COLOR_BLACK, COLOR_RED);
+    init_pair(PAIR_BLACK_GREEN, COLOR_BLACK, COLOR_GREEN);
+    init_pair(PAIR_BLACK_BLUE, COLOR_BLACK, COLOR_BLUE);
+    init_pair(PAIR_BLACK_CYAN, COLOR_BLACK, COLOR_CYAN);
+    init_pair(PAIR_BLACK_MAGENTA, COLOR_BLACK, COLOR_MAGENTA);
+    init_pair(PAIR_BLACK_YELLOW, COLOR_BLACK, COLOR_YELLOW);
 
     // Black background for custom colors
     init_pair(PAIR_GOLD_BLACK, CCOLOR_GOLD, COLOR_BLACK);
@@ -396,7 +408,6 @@ fn initialize_colors() {
     // init_pair(PAIR_WHITE_GRADIENT_8, COLOR_WHITE, CCOLOR_GRADIENT_8);
 }
 
-
 fn main() -> Result<(), NulError> {
     let _ = fs::write("log.txt", "");
     let (tx_frontend, rx_frontend) = channel::<Message>();
@@ -411,12 +422,21 @@ fn main() -> Result<(), NulError> {
 
     let mut screen = Screen::new();
 
+    let mut selected = Selected {
+        win_type: WinType::FOLDERWIN,
+        index: vec![0, 0],
+    };
+
     initscr();
-    // attr_on(PAIR_WHITE_BLACK);
     if !has_colors() {
         panic!("No colors")
     }
-    init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
+    init_screen(
+        &mut screen,
+        content.clone(),
+        tx_frontend_arc.clone(),
+        &mut selected,
+    )?;
 
     let _ = tx_frontend_arc
         .send(Message {
@@ -425,10 +445,7 @@ fn main() -> Result<(), NulError> {
         })
         .map_err(|e| format!("{e:?}"));
 
-    mousemask(
-        ALL_MOUSE_EVENTS as mmask_t,
-        None,
-    );
+    mousemask(ALL_MOUSE_EVENTS as mmask_t, None);
     mouseinterval(0);
 
     nodelay(stdscr(), true); // make getch non-blocking
@@ -440,27 +457,30 @@ fn main() -> Result<(), NulError> {
             match message.mtype {
                 MessageType::RELOADSTORAGE => {
                     // LOG!("RELOADSTORAGE");
-                    screen.refresh_screen_of(WinType::STORAGEWIN,true)?;
+                    screen.refresh_screen_of(WinType::STORAGEWIN, true)?;
                     let content_without_lock = (*content).read().unwrap();
-                    screen.populate_of(WinType::STORAGEWIN,content_without_lock)?;
+                    screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
+                    screen.populate_of(WinType::STORAGEWIN, content_without_lock)?;
                     // // turn this "true" atlast will result in flushing of the value populated before
-                    screen.refresh_screen_of(WinType::STORAGEWIN,false)?;
+                    screen.refresh_screen_of(WinType::STORAGEWIN, false)?;
                 }
                 MessageType::RELOADFOLDER => {
                     // LOG!("RELOADSTORAGE");
-                    screen.refresh_screen_of(WinType::FOLDERWIN,true)?;
+                    screen.refresh_screen_of(WinType::FOLDERWIN, true)?;
                     let content_without_lock = (*content).read().unwrap();
-                    screen.populate_of(WinType::FOLDERWIN,content_without_lock)?;
+                    screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
+                    screen.populate_of(WinType::FOLDERWIN, content_without_lock)?;
                     // // turn this "true" atlast will result in flushing of the value populated before
-                    screen.refresh_screen_of(WinType::FOLDERWIN,false)?;
+                    screen.refresh_screen_of(WinType::FOLDERWIN, false)?;
                 }
                 MessageType::RELOADFILE => {
                     // LOG!("RELOADSTORAGE");
-                    screen.refresh_screen_of(WinType::FILEWIN,true)?;
+                    screen.refresh_screen_of(WinType::FILEWIN, true)?;
                     let content_without_lock = (*content).read().unwrap();
-                    screen.populate_of(WinType::FILEWIN,content_without_lock)?;
+                    screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
+                    screen.populate_of(WinType::FILEWIN, content_without_lock)?;
                     // // turn this "true" atlast will result in flushing of the value populated before
-                    screen.refresh_screen_of(WinType::FILEWIN,false)?;
+                    screen.refresh_screen_of(WinType::FILEWIN, false)?;
                 }
                 MessageType::RELOAD => {
                     clear();
@@ -473,7 +493,16 @@ fn main() -> Result<(), NulError> {
                 }
                 MessageType::READDIR => {
                     // LOG!("READDIR START");
-                    init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
+                    selected = Selected {
+                        win_type: WinType::FOLDERWIN,
+                        index: vec![0, 0],
+                    };
+                    init_screen(
+                        &mut screen,
+                        content.clone(),
+                        tx_frontend_arc.clone(),
+                        &mut selected,
+                    )?;
                     // LOG!("READDIR END");
                 }
                 _ => {}
@@ -481,10 +510,18 @@ fn main() -> Result<(), NulError> {
             Ok(())
         })?;
         let ch = getch();
+        // if (ch != ERR) {
+        // LOG!(format!("{}", ch));
+        // }
 
         if ch == KEY_RESIZE {
             screen.update_height();
-            init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
+            init_screen(
+                &mut screen,
+                content.clone(),
+                tx_frontend_arc.clone(),
+                &mut selected,
+            )?;
         } else if ch == 'q' as i32 || ch == 'Q' as i32 {
             break;
         } else if ch == KEY_MOUSE {
@@ -504,6 +541,83 @@ fn main() -> Result<(), NulError> {
                 );
                 // LOG!("Finished");
             }
+        } else if ch == 10 {
+            let (y, x) = screen.get_xy(&mut selected);
+            let mut event = MEVENT {
+                id: 0,
+                x,
+                y,
+                z: 0,
+                bstate: 2,
+            };
+            // LOG!("sending");
+            let _ = screen.checkMouseClick(
+                content.write().unwrap(),
+                &mut event,
+                tx_frontend_arc.clone(),
+            );
+        } else if ch == KEY_DOWN {
+            screen.change_bg_selected(&mut selected, PAIR_WHITE_BLACK, true);
+            let (win_type, visited) = screen.select_down(&mut selected);
+            if !visited {
+                let window = screen.get_window(win_type);
+                let dim = window.get_dim_unmut();
+                let mut event = MEVENT {
+                    id: 0,
+                    x: dim.startx + 2,
+                    y: dim.starty + 2,
+                    z: 0,
+                    bstate: 2097152, // scroll down event
+                };
+                // LOG!("sending");
+                let _ = screen.checkMouseClick(
+                    content.write().unwrap(),
+                    &mut event,
+                    tx_frontend_arc.clone(),
+                );
+            }
+            screen.refresh_screen_of(win_type, true);
+            screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
+            screen.populate_of(win_type, content.clone().read().unwrap());
+            screen.refresh_screen_of(win_type, false);
+        } else if ch == KEY_UP {
+            screen.change_bg_selected(&mut selected, PAIR_WHITE_BLACK, true);
+            let (win_type, visited) = screen.select_up(&mut selected);
+            LOG!(format!("??{}", visited));
+            if !visited {
+                let (y, x) = screen.get_xy(&mut selected);
+                let mut event = MEVENT {
+                    id: 0,
+                    x,
+                    y,
+                    z: 0,
+                    bstate: 65536, // scroll up event
+                };
+                // LOG!("sending");
+                let _ = screen.checkMouseClick(
+                    content.write().unwrap(),
+                    &mut event,
+                    tx_frontend_arc.clone(),
+                );
+            }
+            screen.refresh_screen_of(win_type, true);
+            screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
+            screen.populate_of(win_type, content.clone().read().unwrap());
+            screen.refresh_screen_of(win_type, false);
+        } else if ch == KEY_RIGHT {
+            screen.change_bg_selected(&mut selected, PAIR_WHITE_BLACK, true);
+            screen.select_right(&mut selected);
+            screen.refresh_screen(true);
+            screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
+            screen.populate(content.clone().read().unwrap());
+            screen.refresh_screen(false);
+        } else if ch == KEY_LEFT {
+            screen.change_bg_selected(&mut selected, PAIR_WHITE_BLACK, true);
+            screen.select_left(&mut selected);
+            screen.refresh_screen(true);
+            screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
+            screen.populate(content.clone().read().unwrap());
+            screen.refresh_screen(false);
         }
     }
 

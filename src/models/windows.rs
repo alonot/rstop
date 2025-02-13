@@ -2,7 +2,9 @@ use ncurses::{
     attr_t, attroff, attron, attrset, waddstr, wattroff, wattrset, wbkgd, wprintw, COLOR_PAIR, COLOR_WHITE, WINDOW
 };
 use ncurses::{ACS_DARROW, ACS_UARROW};
+use core::num;
 use std::fs;
+use std::ops::Deref;
 use std::sync::mpsc::Sender;
 use std::vec;
 use std::{
@@ -44,6 +46,14 @@ macro_rules! implement_getters_setters {
             self.visited
         }
 
+        fn set_style_on(&mut self, val: bool) {
+            self.style_on = val;
+        }
+
+        fn get_style_on(&mut self) -> bool {
+            self.style_on
+        }
+
         fn set_pad(&mut self, window: WINDOW) {
             self.pad = Some(window);
         }
@@ -59,6 +69,10 @@ macro_rules! implement_getters_setters {
 
         fn get_children(&mut self) -> &mut Vec<Box<dyn DisplayContent>> {
             &mut self.children
+        }
+        
+        fn get_children_unmut(&self) -> &Vec<Box<dyn DisplayContent>> {
+            &self.children
         }
 
         fn get_dim(&mut self) -> &mut Dimension {
@@ -117,6 +131,7 @@ pub struct Window {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -167,6 +182,7 @@ impl Window {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
             styles_after_populate,
             styles_before_populate,
@@ -246,6 +262,7 @@ pub struct ProgressBar {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -287,6 +304,7 @@ impl ProgressBar {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
 
             styles_after_populate,
@@ -320,14 +338,15 @@ impl DisplayContent for ProgressBar {
                 match self.pad {
                     Some(pad) => {
                         let num_colors = self.bar_colors.len();
-                        let acwidth = self.get_dim_unmut().width as usize;
+                        // let acwidth = self.get_dim_unmut().width as usize;
 
                         if num_colors > 0 {
                             // let segment_width = acwidth / num_colors; // Base width per color segment
 
                             // let mut offset = 0;
                             // let mut prev = 0;
-                            let i = width % num_colors;
+                            let ptr = state as *const _ as usize;
+                            let i = ((width + ptr) % num_colors);
                             let color_pair = self.bar_colors[i];
                             wattrset(pad, COLOR_PAIR(color_pair));
                             waddstr(pad, &" ".repeat(width)); // Draw segment
@@ -362,6 +381,7 @@ pub struct ScrollView {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -408,6 +428,7 @@ impl ScrollView {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
 
             styles_after_populate,
@@ -509,6 +530,7 @@ pub struct TextBox {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -558,6 +580,7 @@ impl TextBox {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
 
             styles_after_populate,
@@ -648,6 +671,7 @@ pub struct FileInfoWin {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     create_win: bool,
     children: Vec<Box<dyn DisplayContent>>,
@@ -700,6 +724,7 @@ impl FileInfoWin {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
             styles_before_populate,
             styles_after_populate,
@@ -731,6 +756,7 @@ pub struct InfoBox {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     create_win: bool,
     children: Vec<Box<dyn DisplayContent>>,
@@ -793,6 +819,7 @@ impl InfoBox {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
             styles_after_populate,
             styles_before_populate
@@ -809,7 +836,7 @@ impl DisplayContent for InfoBox {
     fn display_state(&mut self, state: &Item) -> Result<(), NulError> {
         match state {
             Item::INFO((str1, str2)) => {
-                LOG!(format!("LOGGING: {}", str2));
+                // LOG!(format!("LOGGING: {}", str2));
                 let next_states = [State::VALUE(Item::STRING((*str1).to_owned())),State::VALUE(Item::STRING((*str2).to_owned())),];
                 self.children
                     .iter_mut()
@@ -829,6 +856,7 @@ pub struct StorageWin {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     create_win: bool,
     children: Vec<Box<dyn DisplayContent>>,
@@ -871,6 +899,7 @@ impl StorageWin {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
             styles_after_populate,
             styles_before_populate
@@ -1085,6 +1114,7 @@ pub struct HeaderWin {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     create_win: bool,
     children: Vec<Box<dyn DisplayContent>>,
@@ -1164,6 +1194,7 @@ impl HeaderWin {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
             styles_after_populate,
             styles_before_populate
@@ -1190,6 +1221,7 @@ pub struct Button {
     win: Option<WINDOW>,
     pad: Option<WINDOW>,
     visited: bool,
+    style_on: bool,
     title: Option<String>,
     children: Vec<Box<dyn DisplayContent>>,
     dimension: Dimension,
@@ -1239,6 +1271,7 @@ impl Button {
             win: None,
             pad: None,
             visited: false,
+            style_on: true,
             create_win: false,
 
             styles_after_populate,

@@ -3,14 +3,22 @@ use std::{
     ffi::NulError,
     fs,
     hash::Hash,
-    sync::{mpsc::Sender, Arc},
+    sync::{mpsc::Sender, Arc, Mutex},
 };
 
 use ncurses::{
-    attr_t, attroff, attron, box_, clear, doupdate, getmaxx, getmaxyx, getyx, keypad, ll::WINDOW, mvwhline, mvwprintw, mvwvline, newpad, newwin, nodelay, prefresh, refresh, stdscr, waddch, wattroff, wattrset, wbkgd, wclear, wmove, wprintw, wrefresh, ACS_DARROW, ACS_HLINE, ACS_VLINE, BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, COLOR_PAIR, LINES, MEVENT
+    attr_t, attroff, attron, box_, clear, doupdate, getmaxx, getmaxyx, getyx, keypad, ll::WINDOW,
+    mvwhline, mvwprintw, mvwvline, newpad, newwin, nodelay, prefresh, refresh, stdscr, waddch,
+    wattroff, wattrset, wbkgd, wclear, wmove, wprintw, wrefresh, ACS_DARROW, ACS_HLINE, ACS_VLINE,
+    BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED,
+    COLOR_PAIR, LINES, MEVENT,
 };
 
-use crate::{total_size_to_string, util::PAIR_WHITE_BLACK, LOG};
+use crate::{
+    total_size_to_string,
+    util::{PAIR_BLACK_YELLOW, PAIR_WHITE_BLACK, PAIR_YELLOW_BLACK},
+    LOG,
+};
 
 use super::data_models::Dirent;
 
@@ -132,6 +140,387 @@ impl Screen {
         Ok(())
     }
 
+    // pub fn display_selected(&mut self, color: i16,set_val : bool) {
+    //     let selected = &self.selected;
+    //     match &selected.win {
+    //         Some(win) => {
+    //             let mut win = (*win).lock().unwrap();
+    //             win.set_style_on(set_val);
+    //             match win.get_win() {
+    //                 Some(win) => {
+    //                     wbkgd(win, COLOR_PAIR(color));
+    //                 }
+    //                 None => {}
+    //             }
+    //             match win.get_pad() {
+    //                 Some(win) => {
+    //                     wbkgd(win, COLOR_PAIR(color));
+    //                 }
+    //                 None => {}
+    //             }
+    //         },
+    //         None => {
+
+    //         },
+    //     }
+    // }
+
+    // pub fn select_right(&mut self) {
+    //     self.display_selected(PAIR_WHITE_BLACK, true);
+    //     let selected = &mut self.selected;
+    //     match selected.select_type {
+    //         WinType::FOLDERWIN => {
+    //             // go to folder win
+    //             selected.select_type = WinType::STORAGEWIN;
+    //             selected.idx1 = 0;
+    //             selected.idx2 = 0;
+    //             let folderwin = self.windows.get_mut(&WinType::STORAGEWIN).expect("Expected WINTYPE");
+    //             let children = folderwin.get_children();
+
+    //         },
+    //         WinType::FILEWIN => todo!(),
+    //         WinType::STORAGEWIN => {
+
+    //         },
+    //     }
+    // }
+
+    pub fn change_bg_selected(&mut self, selected: &mut Selected, color: i16, set_val: bool) {
+        let mut child = self
+            .windows
+            .get_mut(&selected.win_type)
+            .expect("Expected WINTYPE");
+        let mut children = child.get_children();
+        let mut len = children.len() as i32;
+        for index in selected.index.iter().take(selected.index.len() - 1) {
+            // LOG!(format!("{} {}", index, len));
+            if *index < len {
+                child = &mut children[*index as usize];
+            } else {
+                break;
+            }
+            children = child.get_children();
+            len = children.len() as i32;
+        }
+        match selected.index.last() {
+            Some(ind) => {
+                child = &mut children[*ind as usize];
+                match child.get_win() {
+                    Some(win) => {
+                        wbkgd(win, COLOR_PAIR(color));
+                    }
+                    None => {}
+                }
+                match child.get_pad() {
+                    Some(win) => {
+                        wbkgd(win, COLOR_PAIR(color));
+                    }
+                    None => {}
+                }
+                child.set_style_on(set_val);
+            }
+            None => todo!(),
+        }
+    }
+
+    pub fn get_xy(&mut self, selected: &mut Selected) -> (i32, i32) {
+        let mut child = self
+            .windows
+            .get_mut(&selected.win_type)
+            .expect("Expected WINTYPE");
+        let mut children = child.get_children();
+        let mut len = children.len() as i32;
+        for index in selected.index.iter().take(selected.index.len() - 1) {
+            // LOG!(format!("{} {}", index, len));
+            if *index < len {
+                child = &mut children[*index as usize];
+            } else {
+                break;
+            }
+            children = child.get_children();
+            len = children.len() as i32;
+        }
+        match selected.index.last() {
+            Some(ind) => {
+                child = &mut children[*ind as usize];
+                let dim = child.get_dim_unmut();
+                (dim.starty + (dim.height), dim.startx + (dim.width))
+            }
+            None => (-1, -1),
+        }
+    }
+
+    pub fn select_up(&mut self, selected: &mut Selected) -> (WinType, bool) {
+        // calculating next possible index
+        let mut child = self
+            .windows
+            .get_mut(&selected.win_type)
+            .expect("Expected WINTYPE");
+        let mut children = child.get_children();
+        let mut len = children.len() as i32;
+        // for index in selected.index.iter().take(selected.index.len() - 1) {
+        //     if *index < len {
+        //         child = &mut children[*index as usize];
+        //     } else {
+        //         break;
+        //     }
+        //     children = child.get_children();
+        //     len = children.len() as i32;
+        // }
+        let mut refresh_folder_win = true;
+        let mut visited = true;
+        let mut width = 0;
+        let mut height = 0;
+        getmaxyx(stdscr(), &mut height, &mut width);
+        match selected.win_type {
+            WinType::FOLDERWIN => {
+                let zero_ind = selected.index[0];
+                selected.index.clear();
+                if zero_ind == 1 {
+                    selected.index = vec![(zero_ind - 1) % len as i32, 1];
+                } else if zero_ind == 0 {
+                    selected.index = vec![0, 0];
+                } else {
+                    selected.index = vec![(zero_ind - 1) % len as i32];
+                    if selected.index[0] == 0 {
+                        selected.index.push(0);
+                    }
+                }
+                visited = children[selected.index[0] as usize].get_visited();
+            }
+            WinType::FILEWIN => todo!(),
+            WinType::STORAGEWIN => {
+                refresh_folder_win = false;
+                let zero_ind = selected.index[0];
+                let one_ind = selected.index[1];
+                child = &mut children[1];
+                children = child.get_children();
+                len = children.len() as i32;
+                if one_ind == 0 {
+                    selected.index = vec![0, 4];
+                } else if zero_ind == 0 {
+                    selected.index = vec![0, 3];
+                } else {
+                    let prev_ind = one_ind - 1;
+                    let mut at_end = true;
+                    if selected.index.len() >= 4 {
+                        // expanded
+                        let next_child = &mut children[one_ind as usize];
+                        let next_children = next_child.get_children();
+                        let third_ind = selected.index[3];
+                        let two_ind = selected.index[2];
+                        at_end = false;
+                        if two_ind == 1 {
+                            if third_ind == 4 {
+                                selected.index = vec![1, one_ind, 1, 3];
+                            } else {
+                                selected.index = vec![1, one_ind, 0];
+                            }
+                            visited = children[selected.index[0] as usize].get_visited();
+                        } else if two_ind == 2 {
+                            if third_ind != 0 {
+                                let all_children = next_children[2].get_children();
+                                selected.index = vec![
+                                    1,
+                                    one_ind,
+                                    2,
+                                    (third_ind - 1) % all_children.len() as i32,
+                                    0,
+                                ];
+                                visited = all_children[selected.index[3] as usize].get_visited();
+                            } else {
+                                selected.index = vec![1, one_ind, 1, 4];
+                                visited = children[selected.index[0] as usize].get_visited();
+                            }
+                        } else {
+                            at_end = true;
+                        }
+                    }
+                    if at_end {
+                        let prev_child = &mut children[prev_ind as usize];
+                        let prev_children = prev_child.get_children();
+                        if prev_children.len() == 3 {
+                            // expanded
+                            let all_children = prev_children[2].get_children();
+                            selected.index = vec![1, prev_ind, 2, all_children.len() as i32 - 1, 0];
+                            visited = all_children[selected.index[3] as usize].get_visited();
+                        } else {
+                            selected.index = vec![1, prev_ind % len as i32, 0];
+                            visited = children[selected.index[0] as usize].get_visited();
+                        }
+                    }
+                }
+            }
+        }
+        if refresh_folder_win {
+            (WinType::FOLDERWIN, visited)
+        } else {
+            (WinType::STORAGEWIN, visited)
+        }
+    }
+
+    pub fn select_left(&mut self, selected: &mut Selected) {
+        // calculating next possible index
+        // let mut child = self
+        //     .windows
+        //     .get_mut(&selected.win_type)
+        //     .expect("Expected WINTYPE");
+        // for index in &selected.index {
+        //     let children = child.get_children();
+        //     if *index < children.len() as i32 {
+        //         child = &mut children[*index as usize];
+        //     }
+        // }
+        match selected.win_type {
+            WinType::FOLDERWIN => {
+                selected.index.clear();
+                selected.win_type = WinType::STORAGEWIN;
+                selected.index = vec![0, 3];
+            }
+            WinType::FILEWIN => todo!(),
+            WinType::STORAGEWIN => {
+                selected.win_type = WinType::FOLDERWIN;
+                selected.index = vec![0, 0];
+            }
+        }
+    }
+
+    pub fn select_down(&mut self, selected: &mut Selected) -> (WinType, bool) {
+        let mut refresh_folder_win = true;
+
+        let mut child = self
+            .windows
+            .get_mut(&selected.win_type)
+            .expect("Expected WINTYPE");
+        let mut children = child.get_children();
+        let mut len = children.len() as i32;
+        // LOG!(format!("{}", len));
+        // for index in selected.index.iter().take(selected.index.len() - 1) {
+        //     if *index < len {
+        //         child = &mut children[*index as usize];
+        //     } else {
+        //         break;
+        //     }
+        //     children = child.get_children();
+        //     len = children.len() as i32;
+        // }
+        let mut visited = true;
+        let mut width = 0;
+        let mut height = 0;
+        getmaxyx(stdscr(), &mut height, &mut width);
+        match selected.win_type {
+            WinType::FOLDERWIN => {
+                let zero_ind = selected.index[0];
+                let one_ind = selected.index.get(1).map_or(1, |f| *f);
+                selected.index.clear();
+                if zero_ind == 0 && one_ind == 0 {
+                    selected.index = vec![(zero_ind) % len as i32, 1];
+                } else {
+                    selected.index = vec![(zero_ind + 1) % len as i32];
+                    if selected.index[0] == 0 {
+                        selected.index.push(0);
+                    }
+                }
+                let dim = children[selected.index[0] as usize].get_dim_unmut();
+                if dim.startx >= width || dim.starty >= height {
+                    visited = false;
+                }
+            }
+            WinType::FILEWIN => todo!(),
+            WinType::STORAGEWIN => {
+                refresh_folder_win = false;
+                let zero_ind = selected.index[0];
+                let one_ind = selected.index[1];
+                child = &mut children[1];
+                children = child.get_children();
+                len = children.len() as i32;
+                if zero_ind == 0 {
+                    if one_ind == 3 {
+                        selected.index = vec![0, (one_ind + 1)];
+                    } else {
+                        selected.index = vec![1, 0, 0];
+                    }
+                } else {
+                    let next_child = &mut children[one_ind as usize];
+                    let next_children = next_child.get_children_unmut();
+                    if next_children.len() == 3 {
+                        let two_ind = selected.index[2];
+                        // expanded
+                        if two_ind == 0 {
+                            selected.index = vec![1, one_ind, 1, 3];
+                        } else if two_ind == 1 {
+                            let third_ind = selected.index[3];
+                            if third_ind == 3 {
+                                selected.index = vec![1, one_ind, 1, 4];
+                            } else {
+                                selected.index = vec![1, one_ind, 2, 0, 0];
+                            }
+                        } else {
+                            let all_children = next_children[2].get_children_unmut();
+                            let third_ind = selected.index[3];
+                            if third_ind < all_children.len() as i32 - 1 {
+                                selected.index = vec![
+                                    1,
+                                    one_ind,
+                                    2,
+                                    (third_ind + 1) % all_children.len() as i32,
+                                    0,
+                                ];
+                                let dim = all_children[selected.index[3] as usize].get_dim_unmut();
+                                if dim.startx >= width || dim.starty >= height {
+                                    visited = false;
+                                }
+                            } else if one_ind < children.len() as i32 - 1 {
+                                selected.index = vec![1, (one_ind + 1) % len as i32, 0];
+                            } else {
+                                selected.index = vec![1, one_ind, 0];
+                            }
+                        }
+                    } else {
+                        // collapsed
+                        selected.index = vec![1, (one_ind + 1).min(len - 1), 0];
+                        let dim = children[selected.index[1] as usize].get_dim_unmut();
+                        if dim.startx + dim.width > width || dim.starty + dim.height > height {
+                            visited = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        if refresh_folder_win {
+            (WinType::FOLDERWIN, visited)
+        } else {
+            (WinType::STORAGEWIN, visited)
+        }
+    }
+
+    pub fn select_right(&mut self, selected: &mut Selected) {
+        // calculating next possible index
+        // let mut child = self
+        //     .windows
+        //     .get_mut(&selected.win_type)
+        //     .expect("Expected WINTYPE");
+        // for index in &selected.index {
+        //     let children = child.get_children();
+        //     if *index < children.len() as i32 {
+        //         child = &mut children[*index as usize];
+        //     }
+        // }
+        match selected.win_type {
+            WinType::FOLDERWIN => {
+                selected.index.clear();
+                selected.win_type = WinType::STORAGEWIN;
+                selected.index = vec![0, 3];
+            }
+            WinType::FILEWIN => todo!(),
+            WinType::STORAGEWIN => {
+                selected.win_type = WinType::FOLDERWIN;
+                selected.index = vec![0, 0];
+            }
+        }
+    }
+
     pub fn populate_of(
         &mut self,
         wintype: WinType,
@@ -225,11 +614,14 @@ pub trait DisplayContent {
     fn set_win(&mut self, window: WINDOW);
     fn set_visited(&mut self, _: bool);
     fn get_visited(&mut self) -> bool;
+    fn set_style_on(&mut self, _: bool);
+    fn get_style_on(&mut self) -> bool;
     fn set_pad(&mut self, window: WINDOW);
     fn clear_for_resize(&mut self);
     fn get_title(&self) -> Option<String>;
     fn create_win(&self) -> bool;
     fn get_children(&mut self) -> &mut Vec<Box<dyn DisplayContent>>;
+    fn get_children_unmut(&self) -> &Vec<Box<dyn DisplayContent>>;
     fn add_child(&mut self, win: Box<dyn DisplayContent>);
     /**
      * returns styling to be applied in a specific order to be applied before populating content
@@ -425,24 +817,25 @@ pub trait DisplayContent {
 
     //////     DEFAULT        ////////////
     fn populate(&mut self, state: &State) -> Result<(), NulError> {
-        let window = self.get_win();
+        if self.get_style_on() {
+            let window = self.get_win();
 
-        let pad = self.get_pad();
-        let title = self.get_title();
-        let styles = self.get_style_before_populate();
-        match window {
-            Some(window) => {
-                apply_stylying(window, self.get_dim_unmut(), styles);
+            let pad = self.get_pad();
+            let styles = self.get_style_before_populate();
+            match window {
+                Some(window) => {
+                    apply_stylying(window, self.get_dim_unmut(), styles);
+                }
+                None => {}
             }
-            None => {}
-        }
-        match pad {
-            Some(val) => {
-                apply_stylying(val, self.get_dim_unmut(), styles);
+            match pad {
+                Some(val) => {
+                    apply_stylying(val, self.get_dim_unmut(), styles);
+                }
+                None => {}
             }
-            None => {}
         }
-        
+
         match state {
             State::LIST(list) => (*self.get_children())
                 .iter_mut()
@@ -452,29 +845,32 @@ pub trait DisplayContent {
                 self.display_state(val)?;
             }
         };
-        let window = self.get_win();
-        let pad = self.get_pad();
-        let styles = self.get_style_after_populate();
-        // let dimension = self.get_dim_unmut();
-        match window {
-            Some(window) => {
-                match title {
-                    Some(val) => {
-                        if val.len() != 0 {
-                            mvwprintw(window, 0, 1, &format!("{}", val))?;
+        if self.get_style_on() {
+            let window = self.get_win();
+            let pad = self.get_pad();
+            let styles = self.get_style_after_populate();
+            let title = self.get_title();
+            // let dimension = self.get_dim_unmut();
+            match window {
+                Some(window) => {
+                    match title {
+                        Some(val) => {
+                            if val.len() != 0 {
+                                mvwprintw(window, 0, 1, &format!("{}", val))?;
+                            }
                         }
+                        None => {}
                     }
-                    None => {}
+                    apply_stylying(window, self.get_dim_unmut(), styles);
                 }
-                apply_stylying(window, self.get_dim_unmut(), styles);
+                None => {}
             }
-            None => {}
-        }
-        match pad {
-            Some(val) => {
-                apply_stylying(val, self.get_dim_unmut(), styles);
+            match pad {
+                Some(val) => {
+                    apply_stylying(val, self.get_dim_unmut(), styles);
+                }
+                None => {}
             }
-            None => {}
         }
         Ok(())
     }
@@ -536,7 +932,6 @@ pub trait DisplayContent {
         let window = self.get_win();
 
         let pad = self.get_pad();
-        let title = self.get_title();
         let styles = self.get_style_before_populate();
         // let dimension = self.get_dim_unmut();
         match window {
@@ -547,7 +942,6 @@ pub trait DisplayContent {
         }
 
         let dimension = self.get_dim_unmut();
-        // mvwprintw(window, 0, 0, &format!("{} {}\n", win_height, win_width))?;
         match pad {
             Some(val) => {
                 let win_height = match dimension.display_height {
@@ -588,7 +982,6 @@ pub trait DisplayContent {
         let mut cumy = 0;
         let scrollx = dimension.scrollx;
         let scrolly = dimension.scrolly;
-        let width = dimension.width;
         // reprint the values from the datastructure to the pad
         self.get_children()
             .iter_mut()
@@ -748,7 +1141,7 @@ pub enum Item {
     DIRECTORY(Arc<Dirent>),
     SORT(SortButton),
     NUM(f32),
-    INFO((String,String))
+    INFO((String, String)),
 }
 
 #[derive(Clone)]
@@ -768,6 +1161,11 @@ pub struct Message {
     pub content: Option<Arc<String>>,
 }
 
+pub struct Selected {
+    pub win_type: WinType,
+    pub index: Vec<i32>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum MessageType {
     READDIR,
@@ -781,7 +1179,7 @@ pub enum MessageType {
     CHANGEFILEINFO,
 }
 
-#[derive(Eq, Hash, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Debug)]
 pub enum WinType {
     FOLDERWIN,
     FILEWIN,
