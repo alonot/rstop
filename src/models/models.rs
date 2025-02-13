@@ -352,26 +352,28 @@ pub trait DisplayContent {
         let starty = dimension.starty;
         let height = dimension.height + starty;
         let width = dimension.width + startx;
-        if event.x >= startx && event.y >= starty && event.x <= width && event.y <= height {
+        if self.get_visited() && event.x >= startx && event.y >= starty && event.x <= width && event.y <= height {
             let mut res: bool = false;
-            // LOG!(format!(
-            //     "5:{} {} {} {}",
-            //     event.bstate & BUTTON5_PRESSED as u32,
-            //     event.id,
-            //     starty,
-            //     height
-            // ));
+            LOG!(format!(
+                "5:{} {} {} {} {}",
+                event.bstate & BUTTON5_PRESSED as u32,
+                event.bstate & BUTTON4_PRESSED as u32,
+                event.bstate & BUTTON3_PRESSED as u32,
+                event.bstate & BUTTON1_PRESSED as u32 == 2,
+                event.bstate
+
+            ));
             // numbers decided by multiple loggings
-            if event.bstate & BUTTON1_PRESSED as u32 == 2 {
+            if event.bstate ==  BUTTON1_PRESSED as u32 {
                 res = self.left_click(t, tx_frontend)?
                 // left mouse clicked
-            } else if event.bstate & BUTTON3_PRESSED as u32 == 2048 {
+            } else if event.bstate == BUTTON3_PRESSED as u32 {
                 // right click
                 res = self.right_click(t, tx_frontend)?
-            } else if event.bstate & BUTTON5_PRESSED as u32 == 0 {
+            } else if event.bstate == BUTTON4_PRESSED as u32 {
                 // scroll up
                 res = self.scroll_up(t, tx_frontend)?
-            } else if event.bstate & BUTTON4_PRESSED as u32 == 0 {
+            } else if event.bstate == BUTTON5_PRESSED as u32 {
                 // scroll down
                 res = self.scroll_down(t, tx_frontend)?
             }

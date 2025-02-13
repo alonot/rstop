@@ -8,8 +8,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::RwLock;
-use std::thread::sleep;
-use std::time::Duration;
 use std::{ffi::NulError, sync::Arc};
 
 use backend::run_backend;
@@ -18,7 +16,7 @@ use models::models::{
 };
 use models::windows::{FileInfoWin, HeaderWin, ScrollView, StorageWin, TextBox, Window};
 use ncurses::{
-    cbreak, clear, curs_set, doupdate, endwin, flushinp, getch, getmouse, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, stdscr, timeout, ALL_MOUSE_EVENTS, BUTTON1_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, ERR, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
+    cbreak, clear, curs_set, endwin, getch, getmouse, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, stdscr, ALL_MOUSE_EVENTS, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
 };
 
 #[macro_export]
@@ -162,44 +160,6 @@ fn init_screen(
         vec![],
     )));
 
-    let sort_by_name: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
-        Arc::new(
-            |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
-                match t {
-                    State::LIST(_) => {}
-                    State::VALUE(item) => {
-                        if let Item::SORT(val) = item {
-                            let _ = tx_frontend.send(Message {
-                                content: Some(val.context.clone()),
-                                mtype: MessageType::SORTBYNAME,
-                            });
-                        }
-                    }
-                }
-
-                Ok(true)
-            },
-        );
-
-    let sort_by_size: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
-        Arc::new(
-            |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
-                match t {
-                    State::LIST(_) => {}
-                    State::VALUE(item) => {
-                        if let Item::SORT(val) = item {
-                            let _ = tx_frontend.send(Message {
-                                content: Some(val.context.clone()),
-                                mtype: MessageType::SORTBYSIZE,
-                            });
-                        }
-                    }
-                }
-
-                Ok(true)
-            },
-        );
-
     folderwindow.add_child(current_folder_win);
 
     style.clear();
@@ -240,6 +200,45 @@ fn init_screen(
 
     let storagewindow = screen.get_window(WinType::STORAGEWIN);
     let storage_content = content.get(&WinType::STORAGEWIN).expect("Expected storage");
+
+
+    let sort_by_name: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
+        Arc::new(
+            |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
+                match t {
+                    State::LIST(_) => {}
+                    State::VALUE(item) => {
+                        if let Item::SORT(val) = item {
+                            let _ = tx_frontend.send(Message {
+                                content: Some(val.context.clone()),
+                                mtype: MessageType::SORTBYNAME,
+                            });
+                        }
+                    }
+                }
+
+                Ok(true)
+            },
+        );
+
+    let sort_by_size: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
+        Arc::new(
+            |t: &mut State, tx_frontend: Arc<Sender<Message>>| -> Result<bool, String> {
+                match t {
+                    State::LIST(_) => {}
+                    State::VALUE(item) => {
+                        if let Item::SORT(val) = item {
+                            let _ = tx_frontend.send(Message {
+                                content: Some(val.context.clone()),
+                                mtype: MessageType::SORTBYSIZE,
+                            });
+                        }
+                    }
+                }
+
+                Ok(true)
+            },
+        );
 
     storagewindow.add_child(Box::new(HeaderWin::new(
         0,
@@ -346,12 +345,11 @@ fn main() -> Result<(), NulError> {
     mouseinterval(0);
 
     nodelay(stdscr(), true); // make getch non-blocking
-    LOG!(format!("is_delay value {}", is_nodelay(stdscr())));
 
     loop {
         // LOG!("Hello");
         rx_backend.try_iter().try_for_each(|message| {
-            LOG!(format!("Recieved {:?}", message.mtype));
+            // LOG!(format!("Recieved {:?}", message.mtype));
             match message.mtype {
                 MessageType::RELOADSTORAGE => {
                     // LOG!("RELOADSTORAGE");
@@ -360,12 +358,10 @@ fn main() -> Result<(), NulError> {
                     screen.populate(content_without_lock)?;
                     // // turn this "true" atlast will result in flushing of the value populated before
                     screen.refresh_screen(false)?;
-                    nodelay(stdscr(), true); // make getch non-blocking
                 }
                 MessageType::RELOAD => {
                     clear();
                     nodelay(stdscr(), true); // make getch non-blocking
-                    // refresh();
                     screen.clear_screen()?;
                     let content_without_lock = (*content).read().unwrap();
                     screen.populate(content_without_lock)?;
@@ -373,26 +369,15 @@ fn main() -> Result<(), NulError> {
                     screen.refresh_screen(false)?;
                 }
                 MessageType::READDIR => {
-                    LOG!("READDIR START");
+                    // LOG!("READDIR START");
                     init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
-                    LOG!("READDIR END");
+                    // LOG!("READDIR END");
                 }
                 _ => {}
             }
-            // println!("{:?} ",message.mtype);
             Ok(())
         })?;
-        // flushinp();
-        // timeout(0);
-        // LOG!(format!("GOING {}", is_nodelay(stdscr())));
         let ch = getch();
-        if ch == ERR {
-            // LOG!("errr");
-            // flushinp();
-        } else {
-            // LOG!(format!("getch value {}", ch));
-            // LOG!(format!("is_delay value {}", is_nodelay(stdscr())));
-        }
 
         if ch == KEY_RESIZE {
             screen.update_height();
@@ -400,7 +385,6 @@ fn main() -> Result<(), NulError> {
         } else if ch == 'q' as i32 || ch == 'Q' as i32 {
             break;
         } else if ch == KEY_MOUSE {
-            // let val = fs::read_to_string("log.txt").map_or(format!(""), |f| f);
             let mut event = MEVENT {
                 id: 0,
                 x: 0,
@@ -410,20 +394,12 @@ fn main() -> Result<(), NulError> {
             };
 
             if getmouse(&mut event) == OK {
-                // LOG!(format!(
-                //     "5:{} 4:{} 1:{} 2:{} {}",
-                //     event.bstate & BUTTON5_PRESSED as u32,
-                //     event.bstate & BUTTON4_PRESSED as u32,
-                //     event.bstate & BUTTON1_PRESSED as u32,
-                //     event.bstate & BUTTON3_PRESSED as u32,
-                //     event.id
-                // ));
                 let _ = screen.checkMouseClick(
                     content.write().unwrap(),
                     &mut event,
                     tx_frontend_arc.clone(),
                 );
-                LOG!("Finished");
+                // LOG!("Finished");
             }
         }
     }

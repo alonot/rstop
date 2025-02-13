@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::collections::{vec_deque, HashMap, VecDeque};
 use std::fs::{ read_dir, FileType, Metadata};
 use std::io::Error;
 use std::fs;
@@ -13,7 +14,6 @@ use std::{io, thread, vec};
 
 use chrono::{DateTime, Utc};
 use models::data_models::{DirEntry, Directory, Dirent, AGGREGATOR};
-use ncurses::{is_nodelay, stdscr};
 
 use crate::models::models::{Item, Message, MessageType, SortButton, State, WinType};
 use crate::{models, total_size_to_string, LOG};
@@ -170,9 +170,13 @@ fn read_directory(
             names.clear();
             names.push(State::LIST(vec![
                 State::VALUE(Item::STRING(directory.name.to_string())),
-                State::VALUE(Item::STRING("BACK".to_string())),
+                State::VALUE(Item::STRING("<<<BACK<<<".to_string())),
             ]));
         }
+        let _ = tx_backend.send(Message {
+            content: None,
+            mtype: MessageType::READDIR,
+        });
     }
 
     if dir_path.exists() && dir_path.is_dir() {
@@ -442,7 +446,7 @@ fn aggregate_n_send(
     range: i32,
 ) {
     aggregate(content_with_lock, directory, start, range);
-    LOG!("Hr");
+    // LOG!("Hr");
     let _ = tx_backend.send(Message {
         content: None,
         mtype: MessageType::READDIR,
@@ -570,6 +574,8 @@ pub fn run_backend(
             State::VALUE(Item::STRING(format!("Block Size: "))),
         ]),
     ]);
+
+    const MAXDIR: usize = 10;
     {
         let mut content = content_with_lock.write().unwrap();
         content.insert(WinType::FOLDERWIN, folder_content);
@@ -579,55 +585,79 @@ pub fn run_backend(
 
     thread::spawn(move || -> ! {
         let no_threads = Arc::new(Mutex::new(0));
-        let mut directory: Option<Directory> = None;
-
+        let mut directories = HashMap::<Arc<String>,Directory>::new();
+        let mut directory_key_order: VecDeque<Arc<String>> = VecDeque::new();
+        let mut directory: Option<&mut Directory> = None;
+        
         // waits and reads the messages in the channel
         loop {
+            LOG!(format!("Here Out"));
             for received in &rx_frontend {
+                LOG!(format!("Here In"));
                 let no_threads_lc = Arc::clone(&no_threads);
                 let content_with_lock_clone = Arc::clone(&content_with_lock);
                 match received.mtype {
                     MessageType::READDIR => {
-                        let curr_dir_name = match directory {
-                            Some(dir) => dir.path,
-                            None => root.clone(),
+                        let curr_dir_name = match directory.as_deref() {
+                            Some(dir) => dir.path.clone().to_string(),
+                            None => root.clone().to_string(),
                         };
                         let dir = match received.content {
                             Some(val) => val,
                             None => Arc::new(format!("")),
                         };
-                        let next_dir = if dir.eq(&curr_dir_name) {
+                        let next_dir = if curr_dir_name.eq(&dir.to_string()) {
                             dir
                         } else {
                             Arc::new(format!("{}{}", curr_dir_name, dir))
                         };
-                        LOG!(format!("READ: {} ", is_nodelay(stdscr())));
-                        directory = match read_directory(
-                            next_dir,
-                            no_threads_lc,
-                            content_with_lock_clone,
-                            &tx_backend,
-                        ) {
-                            Ok(val) => {
-                                // LOG!(format!("GOT {}", val.name));
-                                Some(val)
+
+                        if directory_key_order.len() == MAXDIR {
+                            let to_remove = directory_key_order.pop_front().expect("Expected deque");
+                            directories.remove(&to_remove);
+                        }
+                        if directory_key_order.len() == MAXDIR {
+                            let to_remove = directory_key_order.pop_front().expect("Expected deque");
+                            directories.remove(&to_remove);
+                        }
+                        if let Entry::Vacant(entry) = directories.entry(next_dir.clone()) {
+                            match read_directory(
+                                next_dir.clone(),
+                                no_threads_lc,
+                                content_with_lock_clone,
+                                &tx_backend,
+                            ) {
+                                Ok(val) => {
+                                    directory_key_order.push_back(next_dir.clone());
+                                    directory = Some(entry.insert(val));
+                                }
+                                Err(e) => {
+                                    println!("{e}");
+                                    directory = None;
+                                }
                             }
-                            Err(e) => {
-                                println!("{e}");
-                                None
+                        } else {
+                            directory = directories.get_mut(&next_dir);
+                            match directory.as_deref_mut() {
+                                Some(dir) => {
+                                    aggregate_n_send(content_with_lock.clone(), &tx_backend, dir, 0, -1);
+                                },
+                                None => {},
                             }
+                            
                         };
                     }
                     MessageType::GOBACK => {
                         let mut same_dir: bool = false;
 
-                        let prev_dir = match directory {
-                            Some(ref dir) => {
-                                let name = dir.path.to_string();
+                        let prev_dir = match directory.as_deref() {
+                            Some(dir) => {
+                                let name = dir.path.clone().to_string();
                                 let path = Path::new(&name);
                                 match path.parent() {
                                     Some(val) => {
-                                        let new_path = val
+                                        let new_path = 
+                                         val
                                             .to_str()
                                             .expect("can't convert to string")
                                             .to_string();
@@ -648,22 +678,37 @@ pub fn run_backend(
                             }
                             None => root.clone(),
                         };
-                        LOG!(format!("SAME: {} {}",same_dir, is_nodelay(stdscr())));
+                        // LOG!(format!("SAME: {} {}",same_dir, is_nodelay(stdscr())));
                         if !same_dir {
-                            directory = match read_directory(
-                                prev_dir,
-                                no_threads_lc,
-                                content_with_lock_clone,
-                                &tx_backend,
-                            ) {
-                                Ok(val) => {
-                                    LOG!(format!("GOT {}", val.name));
-                                    Some(val)
+                            if directory_key_order.len() == MAXDIR {
+                                let to_remove = directory_key_order.pop_front().expect("Expected deque");
+                                directories.remove(&to_remove);
+                            }
+                            if let Entry::Vacant(entry) = directories.entry(prev_dir.clone()) {
+                                match read_directory(
+                                    prev_dir.clone(),
+                                    no_threads_lc,
+                                    content_with_lock_clone,
+                                    &tx_backend,
+                                ) {
+                                    Ok(val) => {
+                                        directory_key_order.push_back(prev_dir.clone());
+                                        directory = Some(entry.insert(val));
+                                    }
+                                    Err(e) => {
+                                        println!("{e}");
+                                        directory = None;
+                                    }
                                 }
-                                Err(e) => {
-                                    println!("{e}");
-                                    None
+                            } else {
+                                directory = directories.get_mut(&prev_dir);
+                                match directory.as_deref_mut() {
+                                    Some(dir) => {
+                                        aggregate_n_send(content_with_lock.clone(), &tx_backend, dir, 0, -1);
+                                    },
+                                    None => {},
                                 }
+                                
                             };
                         }
                         

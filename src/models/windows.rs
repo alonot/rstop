@@ -222,7 +222,7 @@ impl DisplayContent for Window {
         Ok(false)
     }
 
-    fn display_state(&mut self, state: &Item) -> Result<(), NulError> {
+    fn display_state(&mut self, _: &Item) -> Result<(), NulError> {
         // genNulError!();
         Ok(())
     }
@@ -318,7 +318,7 @@ impl DisplayContent for ScrollView {
         let len = self.get_children().len();
         let visited = self.get_visited();
         let dim = self.get_dim_unmut();
-        if visited && (dim.height > 2 && len as i32 - dim.height >= dim.scrolly as i32 ) || (len as i32 - dim.height >= dim.scrolly as i32 && dim.height <= 2) {
+        if visited && (dim.height > 2 && len as i32 - dim.height >= dim.scrolly as i32  -2 ) || (len as i32 - dim.height >= dim.scrolly as i32 && dim.height <= 2) {
             self.get_dim().scrolly += 1;
             let _ = tx_frontend.send(Message {
                 content: None,
@@ -345,7 +345,7 @@ impl DisplayContent for ScrollView {
         }
     }
 
-    fn display_state(&mut self, state: &Item) -> Result<(), NulError> {
+    fn display_state(&mut self, _: &Item) -> Result<(), NulError> {
         // genNulError!();
         Ok(())
     }
@@ -550,7 +550,7 @@ impl DisplayContent for FileInfoWin {
     implement_getters_setters!();
 
     fn display_state(&mut self, state: &Item) -> Result<(), NulError> {
-        let value: &String = match state {
+        let _: &String = match state {
             Item::DIRECTORY(_) => {
                 genNulError!();
                 &format!("")
