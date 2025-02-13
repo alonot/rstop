@@ -7,10 +7,10 @@ use std::{
 };
 
 use ncurses::{
-    attr_t, box_, clear, doupdate, getmaxx, getmaxyx, getyx, keypad, ll::WINDOW, mvwhline, mvwprintw, mvwvline, newpad, newwin, nodelay, prefresh, refresh, stdscr, waddch, wclear, wmove, wprintw, wrefresh, ACS_DARROW, ACS_HLINE, ACS_VLINE, BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, LINES, MEVENT
+    attr_t, attroff, attron, box_, clear, doupdate, getmaxx, getmaxyx, getyx, keypad, ll::WINDOW, mvwhline, mvwprintw, mvwvline, newpad, newwin, nodelay, prefresh, refresh, stdscr, waddch, wattroff, wattrset, wbkgd, wclear, wmove, wprintw, wrefresh, ACS_DARROW, ACS_HLINE, ACS_VLINE, BUTTON1_PRESSED, BUTTON2_PRESSED, BUTTON3_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, COLOR_PAIR, LINES, MEVENT
 };
 
-use crate::{total_size_to_string, LOG};
+use crate::{total_size_to_string, util::PAIR_WHITE_BLACK, LOG};
 
 use super::data_models::Dirent;
 
@@ -91,7 +91,22 @@ impl Screen {
         doupdate();
         Ok(())
     }
-    
+
+    pub fn refresh_screen_of(&mut self, wintype: WinType, re_size: bool) -> Result<(), NulError> {
+        refresh();
+        let mut pdimension = None;
+        if re_size {
+            pdimension = Some(self.dim);
+        }
+        match self.windows.get_mut(&wintype) {
+            Some(win) => {
+                win.display_content(pdimension, 0, 0, 0)?;
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
     pub fn clear_screen(&mut self) -> Result<(), NulError> {
         clear();
         refresh();
@@ -114,6 +129,24 @@ impl Screen {
                 None => Ok(()),
             }
         })?;
+        Ok(())
+    }
+
+    pub fn populate_of(
+        &mut self,
+        wintype: WinType,
+        content: std::sync::RwLockReadGuard<'_, HashMap<WinType, State>>,
+    ) -> Result<(), NulError> {
+        match self.windows.get_mut(&wintype) {
+            Some(win) => {
+                let win_content = content.get(&wintype);
+                match win_content {
+                    Some(val) => win.populate(val),
+                    None => Ok(()),
+                }?;
+            }
+            None => {}
+        }
         Ok(())
     }
 
@@ -168,15 +201,19 @@ pub fn apply_stylying(win: WINDOW, dim: &Dimension, styles: &Vec<(STYLETYPE, att
             STYLETYPE::RIGHTBORDER => {
                 mvwvline(win, 0, dim.width, ACS_VLINE(), dim.height);
             }
-            STYLETYPE::INITCOLOR => {}
-            STYLETYPE::REMOVECOLOR => {}
+            STYLETYPE::STARTCOLOR => {
+                wattrset(win, *attr);
+            }
+            STYLETYPE::REMOVECOLOR => {
+                wattroff(win, *attr);
+            }
             STYLETYPE::FULLBORDER => {
                 box_(win, 0, 0);
             }
             STYLETYPE::SPECIALCHARS => {
                 waddch(win, *attr);
                 getyx(win, &mut y, &mut x);
-            },
+            }
         }
     }
     wmove(win, y, x); // to again move the print cursor where it was
@@ -195,9 +232,15 @@ pub trait DisplayContent {
     fn get_children(&mut self) -> &mut Vec<Box<dyn DisplayContent>>;
     fn add_child(&mut self, win: Box<dyn DisplayContent>);
     /**
-     * returns styling to be applied in a specific order
+     * returns styling to be applied in a specific order to be applied before populating content
      */
-    fn get_style(&self) -> &Vec<(STYLETYPE, attr_t)>;
+    fn get_style_before_populate(&self) -> &Vec<(STYLETYPE, attr_t)>;
+
+    /**
+     * returns styling to be applied in a specific order to be applied after populating content
+     */
+    fn get_style_after_populate(&self) -> &Vec<(STYLETYPE, attr_t)>;
+
     /**
      * Returns Dimension
      */
@@ -222,16 +265,14 @@ pub trait DisplayContent {
         Ok(false)
     }
 
-    fn set_visited_all(&mut self,
-        val: bool) {
+    fn set_visited_all(&mut self, val: bool) {
         self.set_visited(val);
         self.get_children().iter_mut().for_each(|child| {
             child.set_visited_all(val);
         });
     }
 
-
-    fn calculate_next_states(&mut self,dir_info: &Arc<Dirent>) -> Vec<State> {
+    fn calculate_next_states(&mut self, dir_info: &Arc<Dirent>) -> Vec<State> {
         // LOG!(format!("dirent"));
         let dirent = &**dir_info;
         let (name, size, percent) = match dirent {
@@ -248,22 +289,19 @@ pub trait DisplayContent {
                 (format!("{}", dirent.name), dirent.size, dirent.percent)
             }
         };
-        let mut next_states ;
+        let mut next_states;
         match dirent {
             Dirent::AGGREGATE(mutex) => {
                 let agg = mutex.lock().unwrap();
-            // // LOG!(format!("Expanded: {} {}", agg.expanded, agg.common_name));
+                // // LOG!(format!("Expanded: {} {}", agg.expanded, agg.common_name));
                 if agg.expanded {
                     let name_clone = Arc::new(agg.common_name.clone());
-                  // LOG!(format!("Len: {}", agg.dirents.len()));
+                    // LOG!(format!("Len: {}", agg.dirents.len()));
                     next_states = vec![
                         State::VALUE(Item::STRING(format!("Close X"))),
                         State::LIST(vec![
                             State::VALUE(Item::STRING(name)),
-                            State::VALUE(Item::STRING(format!(
-                                "{}",
-                                total_size_to_string(size)
-                            ))),
+                            State::VALUE(Item::STRING(format!("{}", total_size_to_string(size)))),
                             State::VALUE(Item::STRING(format!("{}%", percent))),
                             State::VALUE(Item::SORT(SortButton {
                                 name: format!("Sort Name"),
@@ -277,31 +315,27 @@ pub trait DisplayContent {
                     ];
                     let mut storage_val = vec![];
                     for dir_entry in &agg.dirents {
-                        storage_val.push(State::VALUE(Item::DIRECTORY(Arc::new(
-                            Dirent::VALUE(dir_entry.clone()),
-                        ))));
+                        storage_val.push(State::VALUE(Item::DIRECTORY(Arc::new(Dirent::VALUE(
+                            dir_entry.clone(),
+                        )))));
                     }
                     next_states.push(State::LIST(storage_val));
                     next_states.push(State::VALUE(Item::STRING(format!(""))));
                 } else {
                     next_states = vec![
                         State::VALUE(Item::STRING(name.clone())),
-                        State::VALUE(Item::STRING(format!(
-                            "{}",
-                            total_size_to_string(size)
-                        ))),
+                        State::VALUE(Item::STRING(format!("{}", total_size_to_string(size)))),
                         State::VALUE(Item::STRING(format!("{}%", percent))),
+                        State::VALUE(Item::NUM(percent / 100.)),
                     ];
                 }
             }
             Dirent::VALUE(_) => {
                 next_states = vec![
                     State::VALUE(Item::STRING(name.clone())),
-                    State::VALUE(Item::STRING(format!(
-                        "{}",
-                        total_size_to_string(size)
-                    ))),
+                    State::VALUE(Item::STRING(format!("{}", total_size_to_string(size)))),
                     State::VALUE(Item::STRING(format!("{}%", percent))),
+                    State::VALUE(Item::NUM(percent / 100.)),
                 ];
             }
         }
@@ -325,21 +359,18 @@ pub trait DisplayContent {
                     win.checkMouseEvent(win_state, &mut event, tx_frontend.clone())
                 })?,
             State::VALUE(item) => match item {
-                Item::STRING(val) => {
-                    // LOG!(format!("val {}", val));
-                }
                 Item::DIRECTORY(dir_info) => {
                     let mut next_states = self.calculate_next_states(dir_info);
                     self.get_children()
-                    .iter_mut()
-                    .zip(next_states.iter_mut())
-                    .try_for_each(|(win, state)| {
-                        win.checkMouseEvent(state, event, tx_frontend.clone())
-                    })
-                    .map_err(|e| e.to_string())?;
+                        .iter_mut()
+                        .zip(next_states.iter_mut())
+                        .try_for_each(|(win, state)| {
+                            win.checkMouseEvent(state, event, tx_frontend.clone())
+                        })
+                        .map_err(|e| e.to_string())?;
                     // LOG!(format!("dirent {}", event.id));
                 }
-                Item::SORT(_) => {
+                _ => {
                     // LOG!(format!("Sort {} {}", sort_button.context, event.id));
                 }
             },
@@ -352,19 +383,23 @@ pub trait DisplayContent {
         let starty = dimension.starty;
         let height = dimension.height + starty;
         let width = dimension.width + startx;
-        if self.get_visited() && event.x >= startx && event.y >= starty && event.x <= width && event.y <= height {
+        if self.get_visited()
+            && event.x >= startx
+            && event.y >= starty
+            && event.x <= width
+            && event.y <= height
+        {
             let mut res: bool = false;
-            LOG!(format!(
-                "5:{} {} {} {} {}",
-                event.bstate & BUTTON5_PRESSED as u32,
-                event.bstate & BUTTON4_PRESSED as u32,
-                event.bstate & BUTTON3_PRESSED as u32,
-                event.bstate & BUTTON1_PRESSED as u32 == 2,
-                event.bstate
-
-            ));
+            // LOG!(format!(
+            //     "5:{} {} {} {} {}",
+            //     event.bstate & BUTTON5_PRESSED as u32,
+            //     event.bstate & BUTTON4_PRESSED as u32,
+            //     event.bstate & BUTTON3_PRESSED as u32,
+            //     event.bstate & BUTTON1_PRESSED as u32 == 2,
+            //     event.bstate
+            // ));
             // numbers decided by multiple loggings
-            if event.bstate ==  BUTTON1_PRESSED as u32 {
+            if event.bstate == BUTTON1_PRESSED as u32 {
                 res = self.left_click(t, tx_frontend)?
                 // left mouse clicked
             } else if event.bstate == BUTTON3_PRESSED as u32 {
@@ -390,6 +425,24 @@ pub trait DisplayContent {
 
     //////     DEFAULT        ////////////
     fn populate(&mut self, state: &State) -> Result<(), NulError> {
+        let window = self.get_win();
+
+        let pad = self.get_pad();
+        let title = self.get_title();
+        let styles = self.get_style_before_populate();
+        match window {
+            Some(window) => {
+                apply_stylying(window, self.get_dim_unmut(), styles);
+            }
+            None => {}
+        }
+        match pad {
+            Some(val) => {
+                apply_stylying(val, self.get_dim_unmut(), styles);
+            }
+            None => {}
+        }
+        
         match state {
             State::LIST(list) => (*self.get_children())
                 .iter_mut()
@@ -398,6 +451,30 @@ pub trait DisplayContent {
             State::VALUE(val) => {
                 self.display_state(val)?;
             }
+        };
+        let window = self.get_win();
+        let pad = self.get_pad();
+        let styles = self.get_style_after_populate();
+        // let dimension = self.get_dim_unmut();
+        match window {
+            Some(window) => {
+                match title {
+                    Some(val) => {
+                        if val.len() != 0 {
+                            mvwprintw(window, 0, 1, &format!("{}", val))?;
+                        }
+                    }
+                    None => {}
+                }
+                apply_stylying(window, self.get_dim_unmut(), styles);
+            }
+            None => {}
+        }
+        match pad {
+            Some(val) => {
+                apply_stylying(val, self.get_dim_unmut(), styles);
+            }
+            None => {}
         }
         Ok(())
     }
@@ -420,17 +497,18 @@ pub trait DisplayContent {
         // Now we can safely mutate `self` after we've finished getting the dimension
 
         if self.create_win() {
-            let win = newwin(height, width , starty, startx);
+            let win = newwin(height, width, starty, startx);
             nodelay(win, true);
             keypad(win, true);
+            wbkgd(win, COLOR_PAIR(PAIR_WHITE_BLACK));
             self.set_win(win);
         }
         // LOG!("Here");
         if self.get_children().is_empty() {
-
             let pad = newpad(height + 1, width + 1);
             keypad(pad, true);
             nodelay(pad, true);
+            wbkgd(pad, COLOR_PAIR(PAIR_WHITE_BLACK));
             self.set_pad(pad);
         }
         (cumulative_startx, cumulative_starty)
@@ -459,23 +537,10 @@ pub trait DisplayContent {
 
         let pad = self.get_pad();
         let title = self.get_title();
-        let styles = self.get_style();
+        let styles = self.get_style_before_populate();
         // let dimension = self.get_dim_unmut();
         match window {
             Some(window) => {
-                apply_stylying(window, self.get_dim_unmut(), styles);
-                match title {
-                    Some(val) => {
-                        if val.len() != 0 {
-                            // mvwprintw(window, 0, 1, &format!("{}_ {} {} {} {}",val, dimension.startx, dimension.starty, dimension.height, dimension.width))?;
-                            mvwprintw(window, 0, 1, &format!("{}", val))?;
-                        }
-                    }
-                    None => {
-                        // box_(window, 0, 0);
-                        // mvwprintw(window, 0, 1, &format!("__ {} {} {} {} {}", dimension.startx, dimension.starty, dimension.height, dimension.width, cumulative_starty))?;
-                    }
-                }
                 wrefresh(window);
             }
             None => {}
@@ -506,8 +571,6 @@ pub trait DisplayContent {
                     }
                 };
                 apply_stylying(val, dimension, styles);
-                // box_(val, 0 ,0);
-                // wprintw(val, &format!("__ {} {} {} {} {} {}", dimension.starty + dimension.height, dimension.starty >= 37, dimension.starty , dimension.width, cumulative_starty, cumulative_startx));
                 prefresh(
                     val,
                     0,
@@ -527,25 +590,30 @@ pub trait DisplayContent {
         let scrolly = dimension.scrolly;
         let width = dimension.width;
         // reprint the values from the datastructure to the pad
-        self.get_children().iter_mut().skip(scrollx as usize). skip(scrolly as usize).try_for_each(|child| {
-            (cumx, cumy) = child.display_content(pdimension, cumx, cumy, 0)?;
-            Ok(())
-        })?;
-        self.get_children().iter_mut().take(scrolly as usize).try_for_each(|child| {
-            child.set_visited_all(false);
-            Ok(())
-        })?;
+        self.get_children()
+            .iter_mut()
+            .skip(scrollx as usize)
+            .skip(scrolly as usize)
+            .try_for_each(|child| {
+                (cumx, cumy) = child.display_content(pdimension, cumx, cumy, 0)?;
+                Ok(())
+            })?;
+        self.get_children()
+            .iter_mut()
+            .take(scrolly as usize)
+            .try_for_each(|child| {
+                child.set_visited_all(false);
+                Ok(())
+            })?;
         Ok((cumulative_startx, cumulative_starty))
     }
 
-    fn clear_win(
-        &mut self,
-    ) -> Result<(), NulError> {
+    fn clear_win(&mut self) -> Result<(), NulError> {
         let window = self.get_win();
 
         let pad = self.get_pad();
-        let title = self.get_title();
-        let styles = self.get_style();
+        // let title = self.get_title();
+        // let styles = self.get_style();
         // let dimension = self.get_dim_unmut();
         match window {
             Some(window) => {
@@ -603,7 +671,7 @@ pub trait DisplayContent {
 
         if win_width < 0 {
             win_width = parent.width - initial_startx;
-        } else  if win_width > parent.width {
+        } else if win_width > parent.width {
             win_width = parent.width - 1;
         }
         if win_height < 0 {
@@ -613,8 +681,7 @@ pub trait DisplayContent {
         }
 
         if win_height + initial_starty >= parent.height - 1 {
-            if dimension.initial_starty == -2  {
-
+            if dimension.initial_starty == -2 {
                 cumulative_startx += win_width;
                 cumulative_starty = 0;
                 initial_startx = cumulative_startx;
@@ -639,7 +706,9 @@ pub trait DisplayContent {
 
         // NOTE: Note best way wey must either substract 2 if parent have window else not but that info need to be passed all the way from top to here
         // this 4 is just hardcoded
-        if (initial_startx >= parent.width - 2 && parent.width > 4)  || (initial_starty >= parent.height - 2 && parent.height > 4) {
+        if (initial_startx >= parent.width - 2 && parent.width > 4)
+            || (initial_starty >= parent.height - 2 && parent.height > 4)
+        {
             // exeeds the screen so do not render this
             let x = getmaxx(stdscr());
             initial_startx = x;
@@ -678,6 +747,8 @@ pub enum Item {
     STRING(String),
     DIRECTORY(Arc<Dirent>),
     SORT(SortButton),
+    NUM(f32),
+    INFO((String,String))
 }
 
 #[derive(Clone)]
@@ -704,8 +775,10 @@ pub enum MessageType {
     SORTBYNAME,
     SORTBYSIZE,
     RELOADSTORAGE,
+    RELOADFILE,
+    RELOADFOLDER,
     RELOAD,
-    CHANGEFILEINFO
+    CHANGEFILEINFO,
 }
 
 #[derive(Eq, Hash, PartialEq, Debug)]
@@ -720,8 +793,8 @@ pub enum STYLETYPE {
     TOPBORDER,
     BOTTOMBORDER,
     RIGHTBORDER,
-    INITCOLOR,
+    STARTCOLOR,
     REMOVECOLOR,
     FULLBORDER,
-    SPECIALCHARS
+    SPECIALCHARS,
 }

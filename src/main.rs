@@ -3,6 +3,7 @@ mod models;
 mod util;
 // cargo build; time sudo ./target/debug/rstop
 
+use core::panic;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs;
@@ -16,8 +17,9 @@ use models::models::{
 };
 use models::windows::{FileInfoWin, HeaderWin, ScrollView, StorageWin, TextBox, Window};
 use ncurses::{
-    cbreak, clear, curs_set, endwin, getch, getmouse, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, stdscr, ALL_MOUSE_EVENTS, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
+    attr_on, bkgd, cbreak, clear, curs_set, endwin, getch, getmouse, has_colors, init_color, init_pair, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, start_color, stdscr, use_default_colors, wbkgd, ALL_MOUSE_EVENTS, COLOR_BLACK, COLOR_BLUE, COLOR_CYAN, COLOR_GREEN, COLOR_MAGENTA, COLOR_PAIR, COLOR_RED, COLOR_WHITE, COLOR_YELLOW, KEY_MOUSE, KEY_RESIZE, MEVENT, OK
 };
+use util::{*};
 
 #[macro_export]
 macro_rules! LOG {
@@ -38,7 +40,11 @@ fn init_screen(
     cbreak();
     keypad(stdscr(), true);
     noecho();
+    start_color();
+    initialize_colors();
+    use_default_colors();   
     refresh();
+    bkgd(COLOR_PAIR(PAIR_WHITE_BLACK));
     screen.clear_n_new();
     nodelay(stdscr(), true); // make getch non-blocking
     screen.update_height();
@@ -57,7 +63,8 @@ fn init_screen(
             DimensionType::DIMENS(-1),
             DimensionType::PERCEN(0.3),
             Some(&style),
-            vec![(STYLETYPE::FULLBORDER, 0)],
+            vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_GOLD_BLACK)),(STYLETYPE::FULLBORDER, 0)],
+            vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_GOLD_BLACK))]
         )),
     );
     screen.add_window(
@@ -69,7 +76,8 @@ fn init_screen(
             DimensionType::PERCEN(0.3),
             DimensionType::DIMENS(-1),
             Some(&style),
-            vec![(STYLETYPE::FULLBORDER, 0)],
+            vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_TURQUOISE_BLACK)),(STYLETYPE::FULLBORDER, 0)],
+            vec![ (STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_TURQUOISE_BLACK))]
         )),
     );
 
@@ -86,7 +94,8 @@ fn init_screen(
             DimensionType::DIMENS(-1),
             DimensionType::DIMENS(-1),
             Some(&style),
-            vec![(STYLETYPE::FULLBORDER, 0)],
+            vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_GREEN_BLACK)),(STYLETYPE::FULLBORDER, 0)],
+            vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_GREEN_BLACK))]
         )),
     );
 
@@ -106,8 +115,7 @@ fn init_screen(
                                 mtype: MessageType::READDIR,
                             });
                         }
-                        Item::DIRECTORY(_) => {}
-                        Item::SORT(_) => {}
+                        _ => {}
                     }
                 }
             }
@@ -124,7 +132,8 @@ fn init_screen(
         DimensionType::DIMENS(4),
         DimensionType::DIMENS(-1),
         Some(&style),
-        vec![(STYLETYPE::BOTTOMBORDER, 1)],
+        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_RED_BLACK )),(STYLETYPE::BOTTOMBORDER, 1)],
+        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_RED_BLACK))]
     ));
 
     current_folder_win.add_child(Box::new(TextBox::new(
@@ -133,7 +142,8 @@ fn init_screen(
         DimensionType::DIMENS(2),
         DimensionType::DIMENS(-1),
         None,
-        vec![],
+        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR( PAIR_BLUE_BLACK))],
+        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_BLUE_BLACK))]
     )));
 
     let back_clicked: Arc<dyn Fn(&mut State, Arc<Sender<Message>>) -> Result<bool, String>> =
@@ -157,7 +167,8 @@ fn init_screen(
         DimensionType::DIMENS(1),
         DimensionType::DIMENS(10),
         Some(&style),
-        vec![],
+        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
+                vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
     )));
 
     folderwindow.add_child(current_folder_win);
@@ -175,6 +186,7 @@ fn init_screen(
                     DimensionType::PERCEN(1.),
                     Some(&style),
                     vec![],
+                    vec![]
                 )));
             });
         }
@@ -188,7 +200,8 @@ fn init_screen(
         DimensionType::DIMENS(1),
         DimensionType::PERCEN(1.),
         None,
-        vec![],
+        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_CYAN_BLACK))],
+                vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_CYAN_BLACK))],
     )));
     filewindow.add_child(Box::new(FileInfoWin::new(
         0,
@@ -196,6 +209,7 @@ fn init_screen(
         DimensionType::DIMENS(-1),
         DimensionType::PERCEN(1.),
         vec![],
+        vec![]
     )));
 
     let storagewindow = screen.get_window(WinType::STORAGEWIN);
@@ -248,16 +262,18 @@ fn init_screen(
         sort_by_name,
         sort_by_size,
         vec![],
+        vec![]
     )));
 
     let mut storage_inner_window = Box::new(ScrollView::new(
-        format!(""),
+        format!("Storage"),
         0,
         -1,
         DimensionType::DIMENS(-1),
         DimensionType::DIMENS(-1),
         None,
         vec![(STYLETYPE::BOTTOMBORDER, 1)],
+        vec![]
     ));
 
     match storage_content {
@@ -272,6 +288,7 @@ fn init_screen(
                             DimensionType::DIMENS(1),
                             DimensionType::PERCEN(1.),
                             vec![],
+                            vec![]
                         )));
                     });
                 }
@@ -283,7 +300,9 @@ fn init_screen(
     storagewindow.add_child(storage_inner_window);
 
     screen.refresh_screen(true)?;
-
+    let storagewindow = screen.get_window(WinType::STORAGEWIN);
+    // LOG!(format!("STORAGE: {}", storagewindow.get_dim_unmut().width));
+    
     screen.populate(content)?;
 
     // // turn this "true" atlast will result in flushing of the value populated before
@@ -313,6 +332,71 @@ fn total_size_to_string(total_size: u64) -> String {
     }
 }
 
+fn initialize_colors() {
+    // Define custom colors (R, G, B values range from 0-1000)
+    // init_color(CCOLOR_GOLD, 1000, 843, 0); // RGB(255, 215, 0)
+    // init_color(CCOLOR_ORANGE, 1000, 549, 0); // RGB(255, 140, 0)
+
+    // init_color(CCOLOR_LIGHT_RED, 1000, 400, 400); // Light red
+    // init_color(CCOLOR_PINK, 1000, 600, 800);      // Pink
+    // init_color(CCOLOR_MAGENTA, 800, 200, 800);    // Magenta
+    // init_color(CCOLOR_DARK_PURPLE, 600, 0, 600);  // Dark purple
+    // init_color(CCOLOR_PURPLE, 500, 0, 500);       // Purple
+    // init_color(CCOLOR_TURQUOISE, 200, 800, 800);  // Turquoise
+
+    // init_color(CCOLOR_GRADIENT_1, 1000, 27, 1000);
+    // init_color(CCOLOR_GRADIENT_2, 227, 43, 443);
+    // init_color(CCOLOR_GRADIENT_3, 329, 71, 576);
+    // init_color(CCOLOR_GRADIENT_4, 447, 106, 678);
+    // init_color(CCOLOR_GRADIENT_5, 576, 141, 753);
+    // init_color(CCOLOR_GRADIENT_6, 706, 176, 808);
+    // init_color(CCOLOR_GRADIENT_7, 800, 180, 580);
+    // init_color(CCOLOR_GRADIENT_8, 800, 325, 200);
+
+    // Keep specified color pairs
+    init_pair(PAIR_YELLOW_PURPLE, COLOR_YELLOW, CCOLOR_DARK_PURPLE);
+    init_pair(PAIR_LIGHTRED_PURPLE, CCOLOR_LIGHT_RED, CCOLOR_PURPLE);
+    init_pair(PAIR_PINK_YELLOW, CCOLOR_PINK, COLOR_YELLOW);
+    init_pair(PAIR_CYAN_MAGENTA, COLOR_CYAN, CCOLOR_MAGENTA);
+    init_pair(PAIR_BLACK_GOLD, COLOR_BLACK, CCOLOR_GOLD);
+    init_pair(PAIR_BLACK_TURQUOISE, COLOR_BLACK, CCOLOR_TURQUOISE);
+
+    // Black background pairs for each color
+    init_pair(PAIR_WHITE_BLACK, COLOR_WHITE, COLOR_BLACK);
+    init_pair(PAIR_RED_BLACK, COLOR_RED, COLOR_BLACK);
+    init_pair(PAIR_GREEN_BLACK, COLOR_GREEN, COLOR_BLACK);
+    init_pair(PAIR_BLUE_BLACK, COLOR_BLUE, COLOR_BLACK);
+    init_pair(PAIR_CYAN_BLACK, COLOR_CYAN, COLOR_BLACK);
+    init_pair(PAIR_MAGENTA_BLACK, COLOR_MAGENTA, COLOR_BLACK);
+    init_pair(PAIR_YELLOW_BLACK, COLOR_YELLOW, COLOR_BLACK);
+    
+    init_pair(PAIR_BLACK_WHITE, COLOR_BLACK,COLOR_WHITE );
+    init_pair(PAIR_BLACK_RED, COLOR_BLACK,COLOR_RED );
+    init_pair(PAIR_BLACK_GREEN, COLOR_BLACK,COLOR_GREEN );
+    init_pair(PAIR_BLACK_BLUE, COLOR_BLACK,COLOR_BLUE );
+    init_pair(PAIR_BLACK_CYAN, COLOR_BLACK,COLOR_CYAN );
+    init_pair(PAIR_BLACK_MAGENTA, COLOR_BLACK,COLOR_MAGENTA );
+    init_pair(PAIR_BLACK_YELLOW, COLOR_BLACK,COLOR_YELLOW );
+
+    // Black background for custom colors
+    init_pair(PAIR_GOLD_BLACK, CCOLOR_GOLD, COLOR_BLACK);
+    init_pair(PAIR_ORANGE_BLACK, CCOLOR_ORANGE, COLOR_BLACK);
+    init_pair(PAIR_PURPLE_BLACK, CCOLOR_PURPLE, COLOR_BLACK);
+    init_pair(PAIR_DARKPURPLE_BLACK, CCOLOR_DARK_PURPLE, COLOR_BLACK);
+    init_pair(PAIR_TURQUOISE_BLACK, CCOLOR_TURQUOISE, COLOR_BLACK);
+
+    // Define color pairs (White foreground, gradient background)
+    // init_pair(PAIR_WHITE_GRADIENT_1, COLOR_WHITE, CCOLOR_GRADIENT_1);
+    // init_pair(PAIR_WHITE_GRADIENT_2, COLOR_WHITE, CCOLOR_GRADIENT_2);
+    // init_pair(PAIR_WHITE_GRADIENT_3, COLOR_WHITE, CCOLOR_GRADIENT_3);
+    // init_pair(PAIR_WHITE_GRADIENT_4, COLOR_WHITE, CCOLOR_GRADIENT_4);
+    // init_pair(PAIR_WHITE_GRADIENT_5, COLOR_WHITE, CCOLOR_GRADIENT_5);
+    // init_pair(PAIR_WHITE_GRADIENT_6, COLOR_WHITE, CCOLOR_GRADIENT_6);
+    // init_pair(PAIR_WHITE_GRADIENT_7, COLOR_WHITE, CCOLOR_GRADIENT_7);
+    // init_pair(PAIR_WHITE_GRADIENT_8, COLOR_WHITE, CCOLOR_GRADIENT_8);
+}
+
+
 fn main() -> Result<(), NulError> {
     let _ = fs::write("log.txt", "");
     let (tx_frontend, rx_frontend) = channel::<Message>();
@@ -328,7 +412,10 @@ fn main() -> Result<(), NulError> {
     let mut screen = Screen::new();
 
     initscr();
-
+    // attr_on(PAIR_WHITE_BLACK);
+    if !has_colors() {
+        panic!("No colors")
+    }
     init_screen(&mut screen, content.clone(), tx_frontend_arc.clone())?;
 
     let _ = tx_frontend_arc
@@ -353,11 +440,27 @@ fn main() -> Result<(), NulError> {
             match message.mtype {
                 MessageType::RELOADSTORAGE => {
                     // LOG!("RELOADSTORAGE");
-                    screen.refresh_screen(true)?;
+                    screen.refresh_screen_of(WinType::STORAGEWIN,true)?;
                     let content_without_lock = (*content).read().unwrap();
-                    screen.populate(content_without_lock)?;
+                    screen.populate_of(WinType::STORAGEWIN,content_without_lock)?;
                     // // turn this "true" atlast will result in flushing of the value populated before
-                    screen.refresh_screen(false)?;
+                    screen.refresh_screen_of(WinType::STORAGEWIN,false)?;
+                }
+                MessageType::RELOADFOLDER => {
+                    // LOG!("RELOADSTORAGE");
+                    screen.refresh_screen_of(WinType::FOLDERWIN,true)?;
+                    let content_without_lock = (*content).read().unwrap();
+                    screen.populate_of(WinType::FOLDERWIN,content_without_lock)?;
+                    // // turn this "true" atlast will result in flushing of the value populated before
+                    screen.refresh_screen_of(WinType::FOLDERWIN,false)?;
+                }
+                MessageType::RELOADFILE => {
+                    // LOG!("RELOADSTORAGE");
+                    screen.refresh_screen_of(WinType::FILEWIN,true)?;
+                    let content_without_lock = (*content).read().unwrap();
+                    screen.populate_of(WinType::FILEWIN,content_without_lock)?;
+                    // // turn this "true" atlast will result in flushing of the value populated before
+                    screen.refresh_screen_of(WinType::FILEWIN,false)?;
                 }
                 MessageType::RELOAD => {
                     clear();

@@ -414,22 +414,16 @@ fn change_selected(
             let file_content = State::LIST(vec![
                 State::VALUE(Item::STRING(format!("{}", dirent.name))),
                 State::LIST(vec![
-                    State::VALUE(Item::STRING(format!("File Type: {}", get_file_type_as_string(&dirent.file_type)))),
-                    State::VALUE(Item::STRING(format!("Size: {}", total_size_to_string(dirent.size)))),
-                    State::VALUE(Item::STRING(format!("Permission: {}", dirent.mode))),
-                    State::VALUE(Item::STRING(format!(
-                        "Last Accessed: {}",
-                        system_time_to_string(&dirent.accessed)
-                    ))),
-                    State::VALUE(Item::STRING(format!("Created: {}", system_time_to_string(&dirent.created)))),
-                    State::VALUE(Item::STRING(format!(
-                        "Last Modified: {}",
-                        system_time_to_string(&dirent.modified)
-                    ))),
-                    State::VALUE(Item::STRING(format!("Number of Links: {}", dirent.nlink))),
-                    State::VALUE(Item::STRING(format!("Dev: {}", dirent.dev))),
-                    State::VALUE(Item::STRING(format!("Ino: {}", dirent.ino))),
-                    State::VALUE(Item::STRING(format!("Block Size: {}", total_size_to_string(dirent.size)))),
+                    State::VALUE(Item::INFO((format!("File Type: "),format!("{}", get_file_type_as_string(&dirent.file_type))))),
+                    State::VALUE(Item::INFO((format!("Size: "),format!("{}", total_size_to_string(dirent.size))))),
+                    State::VALUE(Item::INFO((format!("Permission: "),format!("{}", dirent.mode)))),
+                    State::VALUE(Item::INFO((format!("Last Accessed: "),format!("{}",system_time_to_string(&dirent.accessed))))),
+                    State::VALUE(Item::INFO((format!("Created: "),format!("{}", system_time_to_string(&dirent.created))))),
+                    State::VALUE(Item::INFO((format!("Last Modified: "),format!("{}",system_time_to_string(&dirent.modified))))),
+                    State::VALUE(Item::INFO((format!("Number of Links: "),format!("{}", dirent.nlink)))),
+                    State::VALUE(Item::INFO((format!("Dev: "),format!("{}", dirent.dev)))),
+                    State::VALUE(Item::INFO((format!("Ino: "),format!("{}", dirent.ino)))),
+                    State::VALUE(Item::INFO((format!("Block Size: "),format!("{}", total_size_to_string(dirent.size))))),
                 ]),
             ]);
             content.insert(WinType::FILEWIN, file_content);
@@ -562,16 +556,16 @@ pub fn run_backend(
     let file_content = State::LIST(vec![
         State::VALUE(Item::STRING(format!("File Path"))),
         State::LIST(vec![
-            State::VALUE(Item::STRING(format!("File Type: "))),
-            State::VALUE(Item::STRING(format!("Size: "))),
-            State::VALUE(Item::STRING(format!("Permission: "))),
-            State::VALUE(Item::STRING(format!("Last Accessed: "))),
-            State::VALUE(Item::STRING(format!("Created: "))),
-            State::VALUE(Item::STRING(format!("Last Modified: "))),
-            State::VALUE(Item::STRING(format!("Number of Links: "))),
-            State::VALUE(Item::STRING(format!("Dev: "))),
-            State::VALUE(Item::STRING(format!("Ino: "))),
-            State::VALUE(Item::STRING(format!("Block Size: "))),
+            State::VALUE(Item::INFO((format!("File Type: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Size: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Permission: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Last Accessed: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Created: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Last Modified: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Number of Links: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Dev: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Ino: "),format!("")))),
+            State::VALUE(Item::INFO((format!("Block Size: "),format!("")))),
         ]),
     ]);
 
@@ -591,9 +585,7 @@ pub fn run_backend(
         
         // waits and reads the messages in the channel
         loop {
-            LOG!(format!("Here Out"));
             for received in &rx_frontend {
-                LOG!(format!("Here In"));
                 let no_threads_lc = Arc::clone(&no_threads);
                 let content_with_lock_clone = Arc::clone(&content_with_lock);
                 match received.mtype {
@@ -810,6 +802,13 @@ pub fn run_backend(
                             mtype: MessageType::RELOADSTORAGE,
                         });
                     }
+                    MessageType::RELOADFOLDER => {
+                      // LOG!("Hro");
+                        let _ = tx_backend.send(Message {
+                            content: None,
+                            mtype: MessageType::RELOADFOLDER,
+                        });
+                    }
                     MessageType::CHANGEFILEINFO => {
                         let dirent_name = match received.content {
                             Some(val) => val.to_string(),
@@ -845,17 +844,40 @@ pub fn run_backend(
                                 change_selected(content_with_lock.clone(), dir);
                                 let _ = tx_backend.send(Message {
                                     content: None,
-                                    mtype: MessageType::RELOADSTORAGE,
+                                    mtype: MessageType::RELOADFILE,
                                 });
                             },
                             None => {},
                         }
                     },
                     MessageType::RELOAD => {
-                        let _ = tx_backend.send(Message {
-                            content: None,
-                            mtype: MessageType::RELOAD,
-                        });
+                        match received.content {
+                            Some(val) => {
+                                // LOG!(format!("{}", val));
+                                if "Folder".eq(val.as_str()) {
+                                    let _ = tx_backend.send(Message {
+                                        content: None,
+                                        mtype: MessageType::RELOADFOLDER,
+                                    });
+                                } else if "Storage".eq(val.as_str()) {
+                                    let _ = tx_backend.send(Message {
+                                        content: None,
+                                        mtype: MessageType::RELOADSTORAGE,
+                                    });
+                                } else {
+                                    let _ = tx_backend.send(Message {
+                                        content: None,
+                                        mtype: MessageType::RELOAD,
+                                    });
+                                }
+                            },
+                            None => {
+                                let _ = tx_backend.send(Message {
+                                    content: None,
+                                    mtype: MessageType::RELOAD,
+                                });
+                            },
+                        }
                     }
                     _ => {}
                 }
