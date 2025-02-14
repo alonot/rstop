@@ -8,6 +8,13 @@ A tool to view your storage with percent analysis, directly inside your terminal
 
 That's all. Below is the specification about how the app was build
 
+NOTE: if running from root or from a directory whose read permission is not to with current user. then run using **sudo** 
+`
+    sudo ./build/rstop <Optional<folder_location>>
+`
+
+![alt text](image.png)
+
 ---
 
 # Internals
