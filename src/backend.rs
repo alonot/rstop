@@ -323,8 +323,9 @@ fn aggregate(
         if start == 0 {
             names.clear();
             names.push(State::LIST(vec![
-                State::VALUE(Item::STRING(directory.name.clone().to_string())),
+                State::VALUE(Item::STRING(format!("{}",directory.name.clone()))),
                 State::VALUE(Item::STRING("<<<BACK<<<".to_string())),
+                State::VALUE(Item::STRING(format!("Total Size: {};",total_size_to_string(directory.total_size)))),
             ]));
         }
 

@@ -190,6 +190,16 @@ fn init_screen(
         vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
         vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_RED_BLACK))],
     )));
+    current_folder_win.add_child(Box::new(TextBox::new(
+        0,
+        3,
+        DimensionType::DIMENS(1),
+        DimensionType::DIMENS(-1),
+        None,
+        vec![(STYLETYPE::STARTCOLOR, COLOR_PAIR(PAIR_BLACK_MAGENTA))],
+        vec![(STYLETYPE::REMOVECOLOR, COLOR_PAIR(PAIR_BLACK_MAGENTA))],
+    )));
+    
 
     folderwindow.add_child(current_folder_win);
 
