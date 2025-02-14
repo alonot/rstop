@@ -576,14 +576,13 @@ fn main() -> Result<(), NulError> {
                     tx_frontend_arc.clone(),
                 );
             }
-            screen.refresh_screen_of(win_type, true);
+            let _ = screen.refresh_screen_of(win_type, true);
             screen.change_bg_selected(&mut selected, PAIR_BLACK_YELLOW, false);
             screen.populate_of(win_type, content.clone().read().unwrap());
             screen.refresh_screen_of(win_type, false);
         } else if ch == KEY_UP {
             screen.change_bg_selected(&mut selected, PAIR_WHITE_BLACK, true);
             let (win_type, visited) = screen.select_up(&mut selected);
-            LOG!(format!("??{}", visited));
             if !visited {
                 let (y, x) = screen.get_xy(&mut selected);
                 let mut event = MEVENT {

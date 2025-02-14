@@ -258,15 +258,6 @@ impl Screen {
             .expect("Expected WINTYPE");
         let mut children = child.get_children();
         let mut len = children.len() as i32;
-        // for index in selected.index.iter().take(selected.index.len() - 1) {
-        //     if *index < len {
-        //         child = &mut children[*index as usize];
-        //     } else {
-        //         break;
-        //     }
-        //     children = child.get_children();
-        //     len = children.len() as i32;
-        // }
         let mut refresh_folder_win = true;
         let mut visited = true;
         let mut width = 0;
@@ -360,17 +351,6 @@ impl Screen {
     }
 
     pub fn select_left(&mut self, selected: &mut Selected) {
-        // calculating next possible index
-        // let mut child = self
-        //     .windows
-        //     .get_mut(&selected.win_type)
-        //     .expect("Expected WINTYPE");
-        // for index in &selected.index {
-        //     let children = child.get_children();
-        //     if *index < children.len() as i32 {
-        //         child = &mut children[*index as usize];
-        //     }
-        // }
         match selected.win_type {
             WinType::FOLDERWIN => {
                 selected.index.clear();
@@ -394,16 +374,6 @@ impl Screen {
             .expect("Expected WINTYPE");
         let mut children = child.get_children();
         let mut len = children.len() as i32;
-        // LOG!(format!("{}", len));
-        // for index in selected.index.iter().take(selected.index.len() - 1) {
-        //     if *index < len {
-        //         child = &mut children[*index as usize];
-        //     } else {
-        //         break;
-        //     }
-        //     children = child.get_children();
-        //     len = children.len() as i32;
-        // }
         let mut visited = true;
         let mut width = 0;
         let mut height = 0;
@@ -496,17 +466,6 @@ impl Screen {
     }
 
     pub fn select_right(&mut self, selected: &mut Selected) {
-        // calculating next possible index
-        // let mut child = self
-        //     .windows
-        //     .get_mut(&selected.win_type)
-        //     .expect("Expected WINTYPE");
-        // for index in &selected.index {
-        //     let children = child.get_children();
-        //     if *index < children.len() as i32 {
-        //         child = &mut children[*index as usize];
-        //     }
-        // }
         match selected.win_type {
             WinType::FOLDERWIN => {
                 selected.index.clear();
@@ -548,7 +507,7 @@ impl Screen {
         self.windows.iter_mut().try_for_each(|(name, win)| {
             let win_content = content.get_mut(name);
             match win_content {
-                Some(val) => win.checkMouseEvent(val, event, tx_frontend.clone()),
+                Some(val) => win.check_mouse_event(val, event, tx_frontend.clone()),
                 None => Ok(()),
             }
         })?;
@@ -571,6 +530,9 @@ pub struct Dimension {
     pub display_width: DimensionType,
 }
 
+/**
+ * Applies the styles to the win in given order
+ */
 pub fn apply_stylying(win: WINDOW, dim: &Dimension, styles: &Vec<(STYLETYPE, attr_t)>) {
     let mut y: i32 = 0;
     let mut x: i32 = 0;
@@ -608,14 +570,29 @@ pub fn apply_stylying(win: WINDOW, dim: &Dimension, styles: &Vec<(STYLETYPE, att
     wmove(win, y, x); // to again move the print cursor where it was
 }
 
+/**
+ * The Top level modular box, All UI Windows implement this
+ */
 pub trait DisplayContent {
+    /**
+     * returns ncurses::WINDOW
+     */
     fn get_win(&self) -> Option<WINDOW>;
+    /**
+     * return ncurses::WINDOW (declared as pad)
+     */
     fn get_pad(&self) -> Option<WINDOW>;
+    /**
+     * sets ncurses::WINDOW
+     */
     fn set_win(&mut self, window: WINDOW);
     fn set_visited(&mut self, _: bool);
     fn get_visited(&mut self) -> bool;
     fn set_style_on(&mut self, _: bool);
     fn get_style_on(&mut self) -> bool;
+    /**
+     * sets ncurses::WINDOW (declared as pad)
+     */
     fn set_pad(&mut self, window: WINDOW);
     fn clear_for_resize(&mut self);
     fn get_title(&self) -> Option<String>;
@@ -657,6 +634,11 @@ pub trait DisplayContent {
         Ok(false)
     }
 
+    ////////////////////////////     DEFAULT        //////////////////////////////////////////
+    /**
+     * sets all visited value for all the child of this.
+     * Eg. if parent's visited is false(i.e. it is not visible), then all its children must also be set to false(they are also not visible)
+     */
     fn set_visited_all(&mut self, val: bool) {
         self.set_visited(val);
         self.get_children().iter_mut().for_each(|child| {
@@ -664,8 +646,12 @@ pub trait DisplayContent {
         });
     }
 
+    /**
+     * Calculates the states of a dirent
+     * If dirent is aggregator then returns different set when expanded,
+     * else different set of states.
+     */
     fn calculate_next_states(&mut self, dir_info: &Arc<Dirent>) -> Vec<State> {
-        // LOG!(format!("dirent"));
         let dirent = &**dir_info;
         let (name, size, percent) = match dirent {
             crate::models::data_models::Dirent::AGGREGATE(mutex) => {
@@ -685,10 +671,8 @@ pub trait DisplayContent {
         match dirent {
             Dirent::AGGREGATE(mutex) => {
                 let agg = mutex.lock().unwrap();
-                // // LOG!(format!("Expanded: {} {}", agg.expanded, agg.common_name));
                 if agg.expanded {
                     let name_clone = Arc::new(agg.common_name.clone());
-                    // LOG!(format!("Len: {}", agg.dirents.len()));
                     next_states = vec![
                         State::VALUE(Item::STRING(format!("Close X"))),
                         State::LIST(vec![
@@ -706,6 +690,7 @@ pub trait DisplayContent {
                         ]),
                     ];
                     let mut storage_val = vec![];
+                    // adding the children of the aggregator to the list
                     for dir_entry in &agg.dirents {
                         storage_val.push(State::VALUE(Item::DIRECTORY(Arc::new(Dirent::VALUE(
                             dir_entry.clone(),
@@ -714,6 +699,7 @@ pub trait DisplayContent {
                     next_states.push(State::LIST(storage_val));
                     next_states.push(State::VALUE(Item::STRING(format!(""))));
                 } else {
+                    // this state will go to a StorageWin
                     next_states = vec![
                         State::VALUE(Item::STRING(name.clone())),
                         State::VALUE(Item::STRING(format!("{}", total_size_to_string(size)))),
@@ -723,6 +709,7 @@ pub trait DisplayContent {
                 }
             }
             Dirent::VALUE(_) => {
+                // this state will go to a StorageWin
                 next_states = vec![
                     State::VALUE(Item::STRING(name.clone())),
                     State::VALUE(Item::STRING(format!("{}", total_size_to_string(size)))),
@@ -734,7 +721,11 @@ pub trait DisplayContent {
         next_states
     }
 
-    fn checkMouseEvent(
+    /**
+     * Checks which Window was clicked and calls its respective event handler
+     * If that event handler returns true that means this event has been consumed, hence mark the id of event to -1
+     */
+    fn check_mouse_event(
         &mut self,
         t: &mut State,
         mut event: &mut MEVENT,
@@ -748,7 +739,7 @@ pub trait DisplayContent {
                 .iter_mut()
                 .zip(list.iter_mut())
                 .try_for_each(|(win, win_state)| {
-                    win.checkMouseEvent(win_state, &mut event, tx_frontend.clone())
+                    win.check_mouse_event(win_state, &mut event, tx_frontend.clone())
                 })?,
             State::VALUE(item) => match item {
                 Item::DIRECTORY(dir_info) => {
@@ -757,7 +748,7 @@ pub trait DisplayContent {
                         .iter_mut()
                         .zip(next_states.iter_mut())
                         .try_for_each(|(win, state)| {
-                            win.checkMouseEvent(state, event, tx_frontend.clone())
+                            win.check_mouse_event(state, event, tx_frontend.clone())
                         })
                         .map_err(|e| e.to_string())?;
                     // LOG!(format!("dirent {}", event.id));
@@ -782,14 +773,6 @@ pub trait DisplayContent {
             && event.y <= height
         {
             let mut res: bool = false;
-            // LOG!(format!(
-            //     "5:{} {} {} {} {}",
-            //     event.bstate & BUTTON5_PRESSED as u32,
-            //     event.bstate & BUTTON4_PRESSED as u32,
-            //     event.bstate & BUTTON3_PRESSED as u32,
-            //     event.bstate & BUTTON1_PRESSED as u32 == 2,
-            //     event.bstate
-            // ));
             // numbers decided by multiple loggings
             if event.bstate == BUTTON1_PRESSED as u32 {
                 res = self.left_click(t, tx_frontend)?
@@ -807,16 +790,18 @@ pub trait DisplayContent {
             if res {
                 event.id = -1;
             }
-            // LOG!(format!(
-            //     "{}",
-            //     event.id,
-            // ));
         }
         Ok(())
     }
 
-    //////     DEFAULT        ////////////
+    /**
+    apply the styles_before_populate
+     Populate the windows recursively using the state.
+     apply the styles_after_populate
+     state is assumed to be of same depth as of children
+    */
     fn populate(&mut self, state: &State) -> Result<(), NulError> {
+        // applying the styles
         if self.get_style_on() {
             let window = self.get_win();
 
@@ -835,7 +820,7 @@ pub trait DisplayContent {
                 None => {}
             }
         }
-
+        // populating the content to the windows
         match state {
             State::LIST(list) => (*self.get_children())
                 .iter_mut()
@@ -845,6 +830,8 @@ pub trait DisplayContent {
                 self.display_state(val)?;
             }
         };
+
+        // applying the styles
         if self.get_style_on() {
             let window = self.get_win();
             let pad = self.get_pad();
@@ -875,6 +862,9 @@ pub trait DisplayContent {
         Ok(())
     }
 
+    /**
+        This calculates the height and width and re/initializes ncurse: WINDOWs and PADs as required
+    */
     fn re_initialize_win(
         &mut self,
         parent: Dimension,
@@ -910,6 +900,10 @@ pub trait DisplayContent {
         (cumulative_startx, cumulative_starty)
     }
 
+    /**
+        goes to each children recursively and refresh them to their respective screen position
+        also taking care of the elements which overflows
+    */
     fn display_content(
         &mut self,
         parent: Option<Dimension>,
@@ -991,6 +985,8 @@ pub trait DisplayContent {
                 (cumx, cumy) = child.display_content(pdimension, cumx, cumy, 0)?;
                 Ok(())
             })?;
+
+        // marking all elements before scrolly as not visited that means there event handler must not be called as they are not visible
         self.get_children()
             .iter_mut()
             .take(scrolly as usize)
@@ -1001,13 +997,14 @@ pub trait DisplayContent {
         Ok((cumulative_startx, cumulative_starty))
     }
 
+        // mvwprintw(window, 0, 0, &format!("{} {}\n", win_height, win_width))?;
+    /**
+        clears the windows recursively
+    */
     fn clear_win(&mut self) -> Result<(), NulError> {
         let window = self.get_win();
 
         let pad = self.get_pad();
-        // let title = self.get_title();
-        // let styles = self.get_style();
-        // let dimension = self.get_dim_unmut();
         match window {
             Some(window) => {
                 wclear(window);
@@ -1016,8 +1013,6 @@ pub trait DisplayContent {
             }
             None => {}
         }
-
-        // mvwprintw(window, 0, 0, &format!("{} {}\n", win_height, win_width))?;
         match pad {
             Some(val) => {
                 wclear(val);
@@ -1037,6 +1032,7 @@ pub trait DisplayContent {
     /**
      * Calculates and updates self.dim
      * This is supposed to be called while re-initializing the screen
+     * different values of height,width and startx defined where will be the window place
      */
     fn extract_dimensions(
         &mut self,
@@ -1110,8 +1106,6 @@ pub trait DisplayContent {
         dimension.startx = initial_startx + parent.startx;
         dimension.starty = initial_starty + parent.starty;
 
-        // dimension.scrolly = dimension.starty;
-        // LOG!(format!("{}", dimension.starty));
 
         if dimension.initial_startx < 0 {
             cumulative_startx += win_width;
