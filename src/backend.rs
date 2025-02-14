@@ -1,6 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::{vec_deque, HashMap, VecDeque};
-use std::fs::{ read_dir, FileType, Metadata};
+use std::fs::{ exists, read_dir, FileType, Metadata};
 use std::io::Error;
 use std::fs;
 use std::os::unix::fs::{FileTypeExt, MetadataExt as UMetaExt, PermissionsExt};
@@ -535,7 +535,7 @@ pub fn run_backend(
     tx_backend: Sender<Message>,
 ) {
     let folder_content = State::LIST(vec![]);
-    let root = Arc::new("/home/alonot".to_owned());
+    let root = Arc::new("/".to_owned());
     let storage_content = State::LIST(vec![
         State::LIST(vec![
             State::VALUE(Item::STRING(format!("Name"))),
@@ -604,11 +604,7 @@ pub fn run_backend(
                             Arc::new(format!("{}{}", curr_dir_name, dir))
                         };
 
-                        if directory_key_order.len() == MAXDIR {
-                            let to_remove = directory_key_order.pop_front().expect("Expected deque");
-                            directories.remove(&to_remove);
-                        }
-                        if directory_key_order.len() == MAXDIR {
+                        if !directories.contains_key(&next_dir) && directory_key_order.len() == MAXDIR {
                             let to_remove = directory_key_order.pop_front().expect("Expected deque");
                             directories.remove(&to_remove);
                         }
@@ -672,7 +668,7 @@ pub fn run_backend(
                         };
                         // LOG!(format!("SAME: {} {}",same_dir, is_nodelay(stdscr())));
                         if !same_dir {
-                            if directory_key_order.len() == MAXDIR {
+                            if !directories.contains_key(&prev_dir) && directory_key_order.len() == MAXDIR {
                                 let to_remove = directory_key_order.pop_front().expect("Expected deque");
                                 directories.remove(&to_remove);
                             }

@@ -6,9 +6,10 @@ mod util;
 use core::panic;
 use std::any::Any;
 use std::collections::HashMap;
-use std::fs;
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::RwLock;
+use std::{env, fs};
 use std::{ffi::NulError, sync::Arc};
 
 use backend::run_backend;
@@ -18,7 +19,12 @@ use models::models::{
 };
 use models::windows::{FileInfoWin, HeaderWin, ScrollView, StorageWin, TextBox, Window};
 use ncurses::{
-    attr_on, bkgd, cbreak, clear, curs_set, endwin, getch, getmouse, has_colors, init_color, init_pair, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho, refresh, start_color, stdscr, use_default_colors, wbkgd, ALL_MOUSE_EVENTS, BUTTON1_PRESSED, BUTTON4_PRESSED, BUTTON5_PRESSED, COLOR_BLACK, COLOR_BLUE, COLOR_CYAN, COLOR_GREEN, COLOR_MAGENTA, COLOR_PAIR, COLOR_RED, COLOR_WHITE, COLOR_YELLOW, ERR, KEY_DOWN, KEY_ENTER, KEY_LEFT, KEY_MOUSE, KEY_RESIZE, KEY_RIGHT, KEY_UP, MEVENT, OK
+    attr_on, bkgd, cbreak, clear, curs_set, endwin, getch, getmouse, has_colors, init_color,
+    init_pair, initscr, is_nodelay, keypad, mmask_t, mouseinterval, mousemask, nodelay, noecho,
+    refresh, start_color, stdscr, use_default_colors, wbkgd, ALL_MOUSE_EVENTS, BUTTON1_PRESSED,
+    BUTTON4_PRESSED, BUTTON5_PRESSED, COLOR_BLACK, COLOR_BLUE, COLOR_CYAN, COLOR_GREEN,
+    COLOR_MAGENTA, COLOR_PAIR, COLOR_RED, COLOR_WHITE, COLOR_YELLOW, ERR, KEY_DOWN, KEY_ENTER,
+    KEY_LEFT, KEY_MOUSE, KEY_RESIZE, KEY_RIGHT, KEY_UP, MEVENT, OK,
 };
 use util::*;
 
@@ -414,11 +420,26 @@ fn main() -> Result<(), NulError> {
     let (tx_backend, rx_backend) = channel::<Message>();
 
     let content: Arc<RwLock<HashMap<WinType, State>>> = Arc::new(RwLock::new(HashMap::new()));
+    let mut dir = Arc::new(format!("/"));
 
-    let dir = Arc::new(format!("/"));
+    let args: Vec<String> = env::args().collect();
+    if args.len() >= 2 {
+        let current_proposed = args[1].clone();
+        let path = PathBuf::from(current_proposed.to_string());
+        if path.exists() {
+            dir = Arc::new(format!(
+                "{}/",
+                path.canonicalize()
+                    .unwrap_or_default()
+                    .to_str()
+                    .expect("Error in converting to str")
+            ));
+            LOG!(format!("_{}", dir));
+        }
+    }
 
     run_backend(content.clone(), rx_frontend, tx_backend);
-    let tx_frontend_arc = Arc::new(tx_frontend);
+    let tx_frontend_arc: Arc<Sender<Message>> = Arc::new(tx_frontend);
 
     let mut screen = Screen::new();
 
