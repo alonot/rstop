@@ -16,8 +16,8 @@ use crate::{
 };
 
 pub struct FolderWin {
-    pub setpath: Arc<Mutex<dyn FnMut(String)>>,
-    pub select_folder: Arc<Mutex<dyn FnMut(String)>>,
+    pub setpath: Arc<dyn Fn(String) + Send + Sync>,
+    pub select_folder: Arc<dyn Fn(String) + Send + Sync>,
     pub folders: Vec<Arc<String>>,
     pub path: Box<PathBuf>,
     pub size: u64,
@@ -54,7 +54,6 @@ impl Component for FolderWin {
                     let select_folder_c = self.select_folder.clone();
                     let f_c = f.clone();
                     Button::new(
-                        Some(f.to_string()),
                         Text::new(
                             format!("{}_{}",f, i * 3 + idx),
                             CSSStyle {
@@ -66,7 +65,7 @@ impl Component for FolderWin {
                             ..Default::default()
                         },
                         move |_e| {
-                            select_folder_c.lock().unwrap()(f_c.to_string());
+                            select_folder_c(f_c.to_string());
                         },
                     )
                     .build()
@@ -105,5 +104,3 @@ impl Component for FolderWin {
         .build()
     }
 }
-
-unsafe impl Send for FolderWin {}

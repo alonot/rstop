@@ -11,7 +11,7 @@ pub struct PathComp
 {
     pub path: String,
     pub name: String,
-    pub setpath: Arc<Mutex<dyn FnMut(String)>>,
+    pub setpath: Arc<dyn Fn(String) + Send + Sync>,
 }
 
 impl Component for PathComp
@@ -22,7 +22,6 @@ impl Component for PathComp
         let set_path = self.setpath.clone();
 
         Button::new(
-            Some(self.path.clone()),
             Text::new(
                 self.name.clone(),
                 CSSStyle {
@@ -36,11 +35,9 @@ impl Component for PathComp
             },
             move |_e| {
 
-                set_path.lock().unwrap()(path.clone());
+                set_path(path.clone());
             },
         )
         .build()
     }
 }
-
-unsafe impl Send for PathComp {}

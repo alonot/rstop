@@ -8,7 +8,7 @@ use crate::components::path::PathComp;
 
 pub struct FolderName{
     pub path: Box<PathBuf>,
-    pub setpath: Arc<Mutex<dyn FnMut(String)>>,
+    pub setpath: Arc<dyn Fn(String) + Send + Sync>,
 }
 
 impl Component for FolderName {
@@ -54,6 +54,3 @@ impl Component for FolderName {
         .build()
     }
 }
-
-
-unsafe impl Send for FolderName {}

@@ -16,3 +16,21 @@ NOTE: if running from root or from a directory whose read permission is not to w
 **WORK IN PROGRESS**
 
 ---
+
+# Frontend
+
+- Using `cncurses` Component Library for `ncurses`.
+
+# Backend
+
+* To prevent too much contention on same memory location backend will send back data by cloning it but in packets.
+
+* Work Queue
+* On CONN_CLOSE, All the works of that Connedtion is closed 
+
+Problems:
+1. How will frontend run an infinite loop ?
+    Solution: we will use handler technic.. 
+    A separate thread will run and check for message from backend, when message recieved it will call this global handler set when App{} is called. This handle will then call etState() to update the frontend accordingly. 
+
+2. If backend send data in packets evry second, then frontend may overload on bigger rendering. Solution frontend will send acknowledge that update is finished, then only backend will start next 1 second timer.

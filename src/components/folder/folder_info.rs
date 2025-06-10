@@ -10,11 +10,9 @@ use crate::{components::folder::folder_name::FolderName, utils::total_size_to_st
 
 pub struct FolderInfo {
     pub path: Box<PathBuf>,
-    pub setpath: Arc<Mutex<dyn FnMut(String)>>,
+    pub setpath: Arc<dyn Fn(String) + Send + Sync>,
     pub size: u64,
 }
-
-unsafe impl Send for FolderInfo{}
 
 impl Component for FolderInfo  {
     fn __call__(&mut self) -> Arc<Mutex<dyn Component>> {
