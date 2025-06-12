@@ -10,35 +10,82 @@ use ncurses::{COLOR_BLACK, COLOR_CYAN};
 
 use crate::{
     components::storage::{direntryrow::DirEntryRow, headerrow::HeaderRow},
-    models::data_models::{DIRENTRYHolder, AGGREGATOR, DIRENTRY},
-    utils::total_size_to_string,
+    models::data_models::{DIRENTRYHolder, Dirent, AGGHOLDER, AGGREGATOR, DIRENTRY},
+    utils::{percent, total_size_to_string},
 };
 
 pub struct AggregatorRow {
     pub agg_lk: Arc<Mutex<AGGREGATOR>>,
-    pub set_file_info_direntry: Arc<dyn Fn(String) + Send + Sync>
+    pub set_file_info_direntry: Arc<dyn Fn(Arc<Mutex<DIRENTRY>>) + Send + Sync>,
 }
 
 impl Component for AggregatorRow {
     fn __call__(&mut self) -> Arc<Mutex<dyn Component>> {
         let (opened, setopened) = use_state(false);
-        let agg = self.agg_lk.lock().unwrap();
+        let (agg_state_lk, set_agg) = use_state(Arc::new(AGGHOLDER(self.agg_lk.clone())));
 
         let setopened_c = setopened.clone();
+        
+        let agg_lk = agg_state_lk.clone();
+        let set_agg_c = set_agg.clone();
 
-        let sort_by_name = || {};
-        let sort_by_size = || {};
+        let sort_by_name = move || {
+            let mut agg = agg_lk.0.lock().unwrap();
+            let reverse = agg.sorted_by_name;
+
+            {
+                let dir_entries = &mut agg.dirents;
+
+                dir_entries.sort_by_key(|v| v.lock().unwrap().name.clone());
+
+                if reverse {
+                    dir_entries.reverse();
+                }
+            }
+
+
+            agg.sorted_by_name = !reverse;
+            set_agg_c(agg_lk.clone());
+        };
+
+        let agg_lk = agg_state_lk.clone();
+        let set_agg_c = set_agg.clone();
+
+        let sort_by_size = move || {
+            let mut agg = agg_lk.0.lock().unwrap();
+            let reverse = agg.sorted_by_size;
+
+            {
+                let dir_entries = &mut agg.dirents;
+
+                dir_entries.sort_by_key(|v| {
+                    let val = v.lock().unwrap().size as i128;
+                    if reverse {
+                        -val
+                    } else {
+                        val
+                    }
+                });
+            }
+
+            agg.sorted_by_size = !reverse;
+            set_agg_c(agg_lk.clone());
+        };
+
+        let agg = agg_state_lk.0.lock().unwrap();
 
         let children = agg
             .dirents
             .iter()
             .map(|d_lk| {
+                let d_c = d_lk.clone();
+                let set_file = self.set_file_info_direntry.clone();
                 let d = d_lk.lock().unwrap();
                 DirEntryRow {
                     name: d.name.to_string(),
-                    size: d.size.to_string(),
-                    percent: d.percent,
-                    set_file_info_direntry: self.set_file_info_direntry.clone()
+                    size: total_size_to_string(d.size),
+                    percent: percent(d.size, agg.total_size),
+                    set_file_info_direntry: Arc::new(move || set_file(d_c.clone())),
                 }
                 .build()
             })
@@ -58,16 +105,17 @@ impl Component for AggregatorRow {
                             btn2_name: "Sort By Size".to_string(),
                             onclick2: Some(Arc::new(sort_by_size)),
                         }
-                        .build()
-                        , CSSStyle{
+                        .build(),
+                        CSSStyle {
                             height: "1",
                             width: "100%",
                             ..Default::default()
-                        }
-                        , move |_e| {
+                        },
+                        move |_e| {
                             setopened_c(false);
-                        }
-                    ).build(),
+                        },
+                    )
+                    .build(),
                     View::new(
                         children,
                         CSSStyle {
@@ -93,7 +141,7 @@ impl Component for AggregatorRow {
                     name: format!("> {}", agg.common_name),
                     size: total_size_to_string(agg.total_size),
                     percent: agg.percent,
-                    set_file_info_direntry: self.set_file_info_direntry.clone()
+                    set_file_info_direntry: Arc::new(move || {}),
                 }
                 .build(),
                 CSSStyle {

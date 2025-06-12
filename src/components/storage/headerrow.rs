@@ -40,7 +40,10 @@ impl Component for HeaderRow {
                     height: "100%",
                     ..Default::default()
                 },
-                move |_e| clk(),
+                move |e| {
+                    e.stop_propogation();
+                    clk()
+                },
             )
             .build(),
             None => Text::new(
@@ -71,7 +74,10 @@ impl Component for HeaderRow {
                     height: "100%",
                     ..Default::default()
                 },
-                move |_e| clk(),
+                move |e| {
+                    e.stop_propogation();
+                    clk()
+                },
             )
             .build(),
             None => Text::new(

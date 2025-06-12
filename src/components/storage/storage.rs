@@ -8,53 +8,88 @@ use cncurses::{
 };
 use ncurses::{COLOR_BLACK, COLOR_MAGENTA, COLOR_RED, KEY_BTAB};
 
-use crate::{components::storage::{aggregator::AggregatorRow, direntryrow::DirEntryRow, headerrow::HeaderRow}, models::data_models::{DIRENTRYHolder, Dirent, DIRENTRY}};
+use crate::{
+    components::storage::{
+        aggregator::AggregatorRow, direntryrow::DirEntryRow, headerrow::HeaderRow,
+    },
+    models::data_models::{DIRENTHolder, DIRENTRYHolder, Dirent, DIRENTRY}, utils::{percent, total_size_to_string},
+};
 
-pub struct StorageWin{
-    pub entries: Vec<Arc<Mutex<Dirent>>>,
-    pub set_file_info_direntry: Arc<dyn Fn(String) + Send + Sync>
+pub struct StorageWin {
+    pub entries: Arc<Mutex<Vec<Dirent>>>,
+    pub set_file_info_direntry: Arc<dyn Fn(Arc<Mutex<DIRENTRY>>) + Send + Sync>,
+    pub loading: bool,
+    pub total_size: u64,
+    pub sort_by_size: Arc<dyn Fn() + Send + Sync>,
+    pub sort_by_name: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl Component for StorageWin {
     fn __call__(&mut self) -> std::sync::Arc<std::sync::Mutex<dyn Component>> {
 
-        let sort_by_name = || {};
-        let sort_by_size = || {};
 
-        let mut children = vec![
-            HeaderRow{
-                name: "Name".to_string(),
-                size: "Size".to_string(),
-                percent: "Percent".to_string(),
-                btn1_name: "Sort By Name".to_string(),
-                onclick1: Some(Arc::new(sort_by_name)),
-                btn2_name: "Sort By Size".to_string(),
-                onclick2: Some(Arc::new(sort_by_size)),
-            }.build()
-        ];
+        let mut children = vec![HeaderRow {
+            name: "Name".to_string(),
+            size: "Size".to_string(),
+            percent: "Percent".to_string(),
+            btn1_name: "Sort By Name".to_string(),
+            onclick1: Some(self.sort_by_name.clone()),
+            btn2_name: "Sort By Size".to_string(),
+            onclick2: Some(self.sort_by_size.clone()),
+        }
+        .build()];
 
-        children.extend(self.entries.iter().map(|d_lk| {
-            let d = d_lk.lock().unwrap();
-            match d.clone() {
-                Dirent::AGGREGATE(agg_lk) => {
-                    AggregatorRow{
-                        agg_lk: agg_lk.clone(),
-                        set_file_info_direntry: self.set_file_info_direntry.clone()
-                    }.build()
-                },
-                Dirent::VALUE(dir_lk) => {
-                    let dir_entry = dir_lk.lock().unwrap();
-                    DirEntryRow {
-                        name: dir_entry.name.to_string(),
-                        size: dir_entry.size.to_string(),
-                        percent: dir_entry.percent,
-                        set_file_info_direntry: self.set_file_info_direntry.clone()
-                    }.build()
-                },
-            }
-        }).collect::<Vec<Arc<Mutex<dyn Component>>>>());
-
-        children.push(Text::new(
+        if self.loading {
+            children.push(
+                Text::new(
+                    "Loading".to_string(),
+                    CSSStyle {
+                        width: "100%",
+                        height: "100%",
+                        overflow: "scroll",
+                        padding: "50% 0 50% 0",
+                        top: "1",
+                        position: "relative",
+                        // boxsizing: "border-box",
+                        background_color: -1,
+                        z_index: -2,
+                        ..Default::default()
+                    },
+                )
+                .build(),
+            )
+        } else {
+            children.extend(
+                self.entries.lock().unwrap()
+                    .iter()
+                    .map(|d_lk| {
+                        match d_lk.clone() {
+                            Dirent::AGGREGATE(agg_lk) => AggregatorRow {
+                                agg_lk: agg_lk.clone(),
+                                set_file_info_direntry: self.set_file_info_direntry.clone(),
+                            }
+                            .build(),
+                            Dirent::VALUE(dir_lk) => {
+                                let d_c = dir_lk.clone();
+                                let dir_entry = dir_lk.lock().unwrap();
+                                let set_file = self.set_file_info_direntry.clone();
+                                DirEntryRow {
+                                    name: dir_entry.name.to_string(),
+                                    size: total_size_to_string(dir_entry.size),
+                                    percent: percent(dir_entry.size , self.total_size),
+                                    set_file_info_direntry: Arc::new(move || {
+                                        set_file(d_c.clone());
+                                    }),
+                                }
+                                .build()
+                            }
+                        }
+                    })
+                    .collect::<Vec<Arc<Mutex<dyn Component>>>>(),
+            );
+        }
+        children.push(
+            Text::new(
                 "Storage".to_string(),
                 CSSStyle {
                     color: Document::get_color(255, 110, 0),
@@ -64,7 +99,8 @@ impl Component for StorageWin {
                     ..Default::default()
                 },
             )
-            .build());
+            .build(),
+        );
 
         View::new(
             children,
@@ -76,7 +112,6 @@ impl Component for StorageWin {
                 boxsizing: "border-box",
                 background_color: -1,
                 border_color: COLOR_RED,
-                color: COLOR_MAGENTA,
                 // taborder: 0,
                 ..Default::default()
             },

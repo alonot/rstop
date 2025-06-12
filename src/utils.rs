@@ -1,6 +1,7 @@
-use std::{fs::FileType, os::unix::fs::FileTypeExt, sync::Arc, time::SystemTime};
+use std::{fs::FileType, os::unix::fs::FileTypeExt, path::{Path, PathBuf}, sync::Arc, time::SystemTime};
 
 use chrono::{DateTime, Utc};
+use cncurses::LOGLn;
 
 use crate::models::data_models::Dirent;
 
@@ -132,3 +133,18 @@ pub fn sort_dir_entry_by_size(dirents: Arc<Dirent>) {
     }
 }
 
+pub fn compare_arc<T>(a: &Arc<T>, b: &Arc<T>) -> bool {
+    Arc::as_ptr(a).eq(&Arc::as_ptr(b))
+}
+
+pub fn path_to_string (path: &Path) -> String {
+    path.canonicalize().expect(&format!("Can't get the absolute path: {:?}", path)).as_os_str().to_str().map_or("/", |f| f).to_string()
+}
+
+pub fn path_last_name (path: &Path) -> String {
+    path.canonicalize().expect("Can't get the absolute path").file_name().map_or("", |f| f.to_str().map_or("", |f| f)).to_string() + "/"
+}
+
+pub fn percent(size:u64 ,total_size: u64) -> f32 {
+    ( ( size as f64 / total_size as f64 ) * 100. ) as f32
+}
